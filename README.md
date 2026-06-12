@@ -1,6 +1,6 @@
 # halo-record (TypeScript)
 
-Tamper-evident, hash-chained Runtime Records for AI agents — the TypeScript recorder.
+Tamper-evident, hash-chained Runtime Records for AI agents: the TypeScript recorder.
 
 **Chain-format compatible with the Python `halo-record` package.** Records written here verify with either verifier, anchor to the same hosted witness, and render in the same Runtime Report. Canonicalization (RFC 8785 subset), hashing, redaction patterns, provenance tagging, and the witness wire protocol are ports of the Python implementation; cross-language interop is the package's defining test.
 
@@ -11,7 +11,7 @@ Zero runtime dependencies (Node ≥ 20, `node:crypto` / `node:fs`).
 You are being asked to put a recorder inside your agent. You should not take that on faith:
 
 - **Zero runtime dependencies.** `npm install halo-record` installs exactly one package; framework adapters use structural typing and never import the frameworks.
-- **One sanctioned network call** — the opt-in witness anchor, which sends only `{subject, count, head, chain_root}`. Record contents never leave your infrastructure.
+- **One sanctioned network call:** the opt-in witness anchor, which sends only `{subject, count, head, chain_root}`. Record contents never leave your infrastructure.
 - **Raw inputs never enter a record.** Arguments are hashed and summarized through a redaction pass before writing.
 - **Small enough to audit.** ~1,400 lines of TypeScript. Read all of it in an afternoon.
 - **Apache-2.0.**
@@ -43,14 +43,14 @@ const cps = await fetchCheckpoints("https://witness.example", "acme");
 const completeness = verifyCompleteness(readLog("./runtime-records/acme.jsonl"), cps); // nothing omitted
 ```
 
-Anchor to a witness (the one sanctioned network call — only `{subject, count, head, chain_root}` is sent; record contents never leave your infrastructure):
+Anchor to a witness (the one sanctioned network call; only `{subject, count, head, chain_root}` is sent, and record contents never leave your infrastructure):
 
 ```ts
 import { anchorRemote, readLog } from "halo-record";
 await anchorRemote("https://witness.example", VENDOR_KEY, readLog("./runtime-records/acme.jsonl"));
 ```
 
-Record a model call (the buyer's first question — "which model saw my data?"):
+Record a model call (the buyer's first question: "which model saw my data?"):
 
 ```ts
 import { recordModelCall } from "halo-record";
@@ -59,12 +59,12 @@ recordModelCall(recorder, {
   provider: "anthropic", model: "claude-sonnet-4-6",
   zeroDataRetention: true, purpose: "draft support reply",
   subject: "acme",
-});   // tool=model.generate, scope=model:anthropic — provider and retention terms, disclosed per call
+});   // tool=model.generate, scope=model:anthropic; provider and retention terms, disclosed per call
 ```
 
 ## Framework adapters
 
-All boundary-captured, all dependency-free (structural typing — the framework
+All boundary-captured, all dependency-free (structural typing; the framework
 packages are never imported):
 
 ```ts
@@ -77,7 +77,7 @@ import { createClaudeAgentHook } from "halo-record";    // Claude Agent SDK Post
 
 Every adapter funnels through the same core (`recordToolCall`), so
 classification, scope, redaction, and provenance behave identically across
-ecosystems — and identically to the Python adapters. Framework hook shapes are
+ecosystems, and identically to the Python adapters. Framework hook shapes are
 structural; if a framework changes its callback signature, the adapter is a
 small shim to update, not a rewrite.
 
@@ -95,7 +95,7 @@ Cross-language checks (require the Python package):
 
 ## Render the Runtime Report
 
-The chain you write here renders with the Python CLI — same format, by design:
+The chain you write here renders with the Python CLI, same format by design:
 
 ```
 pip install halo-record
