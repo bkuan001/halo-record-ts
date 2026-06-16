@@ -21,7 +21,7 @@ You are being asked to put a recorder inside your agent. You should not take tha
 ```ts
 import { Recorder } from "halo-record";
 
-const recorder = new Recorder("./runtime-records/acme.jsonl");
+const recorder = new Recorder("acme.jsonl");
 
 recorder.record("tool_call", "privacy", {
   tool: "email.send",
@@ -38,16 +38,16 @@ Verify a chain (yours or one you received):
 import { verifyLog, readLog, verifyCompleteness } from "halo-record";
 import { fetchCheckpoints } from "halo-record";
 
-const integrity = verifyLog("./runtime-records/acme.jsonl");   // nothing edited
+const integrity = verifyLog("acme.jsonl");   // nothing edited
 const cps = await fetchCheckpoints("https://witness.example", "acme");
-const completeness = verifyCompleteness(readLog("./runtime-records/acme.jsonl"), cps); // nothing omitted
+const completeness = verifyCompleteness(readLog("acme.jsonl"), cps); // nothing omitted
 ```
 
 Anchor to a witness (the one sanctioned network call; only `{subject, count, head, chain_root}` is sent, and record contents never leave your infrastructure):
 
 ```ts
 import { anchorRemote, readLog } from "halo-record";
-await anchorRemote("https://witness.example", VENDOR_KEY, readLog("./runtime-records/acme.jsonl"));
+await anchorRemote("https://witness.example", VENDOR_KEY, readLog("acme.jsonl"));
 ```
 
 Record a model call (the buyer's first question: "which model saw my data?"):
@@ -99,7 +99,7 @@ The chain you write here renders with the Python CLI, same format by design:
 
 ```
 pip install halo-record
-halo report ./runtime-records/acme.jsonl -o acme.html
+halo report acme.jsonl -o acme.html
 ```
 
 You end up looking at your agent's Runtime Report in a browser: every action, its provenance, the chain verdict, and (if anchored) the completeness verdict. Reference implementation and recorder internals: [halo-record (Python)](https://github.com/bkuan001/halo-record).
