@@ -53,6 +53,35 @@ test("redactText + scan basics", () => {
   assert.equal(topSeverity(f), "HIGH");
 });
 
+test("redaction: expanded provider patterns + high-entropy catch-all", () => {
+  // Provider-specific keys that the old 7-pattern list missed. Assembled at
+  // runtime so no secret-shaped literal ever sits in source (synthetic fixtures
+  // would otherwise trip secret scanners — fitting, for a redaction test).
+  const gcp = "AIza" + "x".repeat(35);
+  const stripe = "sk_" + "live_" + "x".repeat(20);
+  const gh = "ghp_" + "a".repeat(36);
+  const jwt = "eyJ" + "x".repeat(12) + "." + "y".repeat(12) + "." + "z".repeat(12);
+  const text = `gcp=${gcp} stripe=${stripe} gh=${gh} jwt=${jwt}`;
+  const red = redactText(text);
+  for (const secret of [gcp, stripe, gh, jwt]) {
+    assert.ok(!red.includes(secret), `leaked: ${secret}`);
+  }
+  const types = new Set(scan(text).map((x) => x.type));
+  for (const t of ["gcp_api_key", "stripe_key", "github_token", "jwt"]) {
+    assert.ok(types.has(t), `missing finding type: ${t}`);
+  }
+
+  // High-entropy token with no known prefix is still caught.
+  const random = "Zx9Qw7Lp2Rt5Vn8Mb3Kc6Hd1Gf4Js0Ay";
+  assert.ok(!redactText(`token ${random}`).includes(random), "high-entropy token leaked");
+  assert.ok(scan(`token ${random}`).some((x) => x.type === "high_entropy_secret"));
+
+  // Must NOT flag benign UUIDs (over-redaction has limits).
+  const uuid = "550e8400-e29b-41d4-a716-446655440000";
+  assert.equal(redactText(`id ${uuid}`), `id ${uuid}`, "UUID wrongly redacted");
+  assert.ok(!scan(`id ${uuid}`).some((x) => x.type === "high_entropy_secret"));
+});
+
 test("summaries=false drops outcome summary entirely", () => {
   const rec = build("tool_call", "privacy", {
     outcome: { status: "ok", summary: "sk-ABCDEFGHIJKLMNOPQRSTUVWX" },
