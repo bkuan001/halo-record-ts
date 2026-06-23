@@ -54,9 +54,7 @@ test("redactText + scan basics", () => {
 });
 
 test("redaction: expanded provider patterns + high-entropy catch-all", () => {
-  // Provider-specific keys that the old 7-pattern list missed. Assembled at
-  // runtime so no secret-shaped literal ever sits in source (synthetic fixtures
-  // would otherwise trip secret scanners — fitting, for a redaction test).
+  // Keys assembled at runtime so no secret-shaped literal sits in source.
   const gcp = "AIza" + "x".repeat(35);
   const stripe = "sk_" + "live_" + "x".repeat(20);
   const gh = "ghp_" + "a".repeat(36);
