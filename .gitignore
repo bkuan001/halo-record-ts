@@ -2,3 +2,12 @@ node_modules/
 dist/
 .DS_Store
 *.tsbuildinfo
+
+# Secrets / credentials — never commit
+.env
+.env.*
+*.pem
+*.key
+
+# Recorded agent data — the recorder emits .jsonl at runtime; keep real records out of git
+*.jsonl
