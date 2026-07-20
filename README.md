@@ -6,6 +6,8 @@ Tamper-evident, hash-chained Runtime Records for AI agents: the TypeScript recor
 
 Zero runtime dependencies (Node ≥ 20, `node:crypto` / `node:fs`).
 
+> **Using halo-record, or thinking about it?** Tell me who you are and what for → [Who's using halo-record?](https://github.com/bkuan001/halo-record/discussions/7)
+
 ## Why you can trust this code
 
 You are being asked to put a recorder inside your agent. You should not take that on faith:
