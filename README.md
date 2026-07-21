@@ -97,7 +97,7 @@ Cross-language checks (require the Python package):
 
 ## Render the Runtime Report
 
-The chain you write here renders with the Python CLI, same format by design:
+The chain you write here renders with the Python CLI, same format by design (the report renderer ships in the Python package - this package has no CLI of its own):
 
 ```
 pip install halo-record
