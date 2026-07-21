@@ -2,7 +2,7 @@
 
 Tamper-evident, hash-chained Runtime Records for AI agents: the TypeScript recorder.
 
-**Chain-format compatible with the Python `halo-record` package.** Records written here verify with either verifier, anchor to the same hosted witness, and render in the same Runtime Report. Canonicalization (RFC 8785 subset), hashing, redaction patterns, provenance tagging, and the witness wire protocol are ports of the Python implementation; cross-language interop is the package's defining test.
+**Chain-format compatible with the Python `halo-record` package.** Records written here verify with either verifier, anchor via the same witness protocol, and render in the same Runtime Report. Canonicalization (RFC 8785 subset), hashing, redaction patterns, provenance tagging, and the witness wire protocol are ports of the Python implementation; cross-language interop is the package's defining test.
 
 Zero runtime dependencies (Node ≥ 20, `node:crypto` / `node:fs`).
 
