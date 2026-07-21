@@ -9,5 +9,8 @@ dist/
 *.pem
 *.key
 
+# Local working notes
+CLAUDE.local.md
+
 # Recorded agent data — the recorder emits .jsonl at runtime; keep real records out of git
 *.jsonl
