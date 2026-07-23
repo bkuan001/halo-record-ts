@@ -4,7 +4,6 @@
    and append one Halo Runtime Record. No framework imports here. */
 
 import { inputHash } from "../canon.ts";
-import { redactText } from "../redact.ts";
 import { build, type HaloRecord, type Source } from "../record.ts";
 
 export type ActionClass = "connector" | "exec" | "data_write" | "data_read" | "network" | "other";
@@ -63,13 +62,18 @@ function extractText(obj: unknown, depth = 0): string {
 
 /* Deterministic outcome block: what the call actually did. status is "error"
    only on a thrown error or an explicit error marker in the response — never
-   inferred (ledger, not classifier). The full response is hashed into the
-   chain; only a redacted summary is stored, never the raw content. */
+   inferred (ledger, not classifier). The full response is hashed into the chain.
+
+   The summary here is the *raw* extracted text: build() is the single place that
+   scans it (so secrets or PII returned in a tool's response are flagged the same
+   as ones passed in its arguments) and then redacts it before it is stored.
+   Redacting here would hide response-borne findings from that scan, so the raw
+   text is handed to build() and never stored raw. */
 export function deriveOutcome(response: unknown, error?: unknown): Record<string, unknown> {
   if (error !== undefined && error !== null) {
     return {
       status: "error",
-      summary: redactText(String(error)).slice(0, 200),
+      summary: String(error),
       hash: inputHash({ error: String(error) }),
     };
   }
@@ -79,7 +83,7 @@ export function deriveOutcome(response: unknown, error?: unknown): Record<string
     if (r["is_error"] || r["error"] || r["status"] === "error") status = "error";
   }
   const out: Record<string, unknown> = { status, hash: inputHash(response ?? null) };
-  const summary = redactText(extractText(response ?? "")).slice(0, 200);
+  const summary = extractText(response ?? "");
   if (summary) out["summary"] = summary;
   return out;
 }

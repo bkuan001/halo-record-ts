@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { canon, computeHash, inputHash, GENESIS_PREV, sha256Hex } from "../src/canon.ts";
 import { redactText, scan, topSeverity } from "../src/redact.ts";
 import { build, Recorder, TenantRecorder, normalizeSource } from "../src/record.ts";
+import { recordToolCall } from "../src/integrations/common.ts";
 import { verifyLog, verifyRecords, readLog } from "../src/verify.ts";
 import { checkpoint, verifyCompleteness, chainRoot, head } from "../src/anchor.ts";
 
@@ -233,5 +234,73 @@ test("provenance fields: principal/parentId/threats/pii_types populate and filte
   const r2 = build("read", "privacy", { tool: "t", toolInput: "no pii" });
   for (const k of ["principal", "parent_id", "threats", "data"]) {
     assert.ok(!(k in r2), `${k} must be absent when empty`);
+  }
+});
+
+test("capture path scans response-borne secrets/PII (not just input)", () => {
+  // regression: deriveOutcome must not redact before build() scans, or a secret
+  // returned in a response never produces findings/pii_types/severity.
+  const dir = mkdtempSync(join(tmpdir(), "halo-cap-"));
+  try {
+    const rec = new Recorder(join(dir, "c.jsonl"));
+    recordToolCall(rec, "fetch", { q: "ok" }, {
+      response: { data: "token sk-bbbbbbbbbbbbbbbbbbbbbbbbb owner bob@corp.io" },
+      category: "security",
+    });
+    const r = readLog(join(dir, "c.jsonl"))[0];
+    const ftypes = new Set((r["findings"] as Array<{ type: string }>).map((f) => f.type));
+    assert.ok(ftypes.has("api_key"), "response secret not flagged");
+    assert.ok(ftypes.has("email"), "response email not flagged");
+    assert.equal(r["severity"], "CRITICAL");
+    assert.deepEqual((r["data"] as Record<string, unknown>)["pii_types"], ["email"]);
+    const flat = JSON.stringify(r);
+    assert.ok(!flat.includes("sk-bbbbb"), "raw response secret leaked");
+    assert.ok(!flat.includes("bob@corp.io"), "raw response email leaked");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("threats: a bare string is one threat, not one per character", () => {
+  const r = build("tool_call", "security", { tool: "t", threats: "prompt_injection" });
+  assert.deepEqual(r["threats"], [{ type: "prompt_injection" }]);
+});
+
+test("parentId: integer zero is preserved; empty string omitted", () => {
+  const r = build("tool_call", "security", { tool: "t", parentId: 0 as unknown as string });
+  assert.equal(r["parent_id"], "0");
+  const r2 = build("tool_call", "security", { tool: "t", parentId: "" });
+  assert.ok(!("parent_id" in r2));
+});
+
+test("redaction: phone and IBAN are detected and counted as PII", () => {
+  const r = build("read", "privacy", {
+    tool: "t",
+    toolInput: { contact: "call 415-555-2020", acct: "GB82WEST12345698765432" },
+  });
+  const ftypes = new Set((r["findings"] as Array<{ type: string }>).map((f) => f.type));
+  assert.ok(ftypes.has("phone"));
+  assert.ok(ftypes.has("iban"));
+  const pii = (r["data"] as Record<string, unknown>)["pii_types"] as string[];
+  assert.ok(pii.includes("phone") && pii.includes("iban"));
+});
+
+test("verify: delegation resolution is reported, orphans do not fail the chain", () => {
+  const dir = mkdtempSync(join(tmpdir(), "halo-del-"));
+  try {
+    const rec = new Recorder(join(dir, "ok.jsonl"));
+    const r1 = rec.append(build("tool_call", "security", { tool: "a" }));
+    rec.append(build("write", "safety", { tool: "b", parentId: r1["record_id"] as string }));
+    const okRes = verifyLog(join(dir, "ok.jsonl"));
+    assert.equal(okRes.delegation.links, 1);
+    assert.equal(okRes.delegation.orphans, 0);
+
+    const rec2 = new Recorder(join(dir, "orphan.jsonl"));
+    rec2.append(build("tool_call", "security", { tool: "a", parentId: "nope" }));
+    const orphRes = verifyLog(join(dir, "orphan.jsonl"));
+    assert.equal(orphRes.ok, true); // orphan is surfaced, not a chain failure
+    assert.equal(orphRes.delegation.orphans, 1);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });

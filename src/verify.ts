@@ -81,6 +81,11 @@ export interface VerifyResult {
   ok: boolean;
   count: number;
   problems: string[];
+  /* Delegation referential integrity: how many records declared a parent_id,
+     and how many of those did not resolve to an earlier record in this chain.
+     Orphans are surfaced but do not fail verification — a windowed export
+     legitimately references parents outside the window (see LIMITS.md). */
+  delegation: { links: number; orphans: number };
 }
 
 /* Verify a list of already-parsed records: schema + chain. */
@@ -88,6 +93,9 @@ export function verifyRecords(records: HaloRecord[], schema?: Schema): VerifyRes
   const s = schema ?? loadSchema();
   const problems: string[] = [];
   let prevHash = GENESIS_PREV;
+  const seenIds = new Set<string>();
+  let parentLinks = 0;
+  let orphanLinks = 0;
 
   records.forEach((record, idx) => {
     const n = idx + 1;
@@ -104,10 +112,24 @@ export function verifyRecords(records: HaloRecord[], schema?: Schema): VerifyRes
     if (declaredHash !== recomputed) {
       problems.push(`record ${n}: chain: hash ${declaredHash} does not match recomputed ${recomputed}`);
     }
+
+    const parentId = record["parent_id"] as string | undefined;
+    if (parentId) {
+      parentLinks += 1;
+      if (!seenIds.has(parentId)) orphanLinks += 1;
+    }
+    const recordId = record["record_id"] as string | undefined;
+    if (recordId) seenIds.add(recordId);
+
     prevHash = declaredHash || recomputed;
   });
 
-  return { ok: problems.length === 0, count: records.length, problems };
+  return {
+    ok: problems.length === 0,
+    count: records.length,
+    problems,
+    delegation: { links: parentLinks, orphans: orphanLinks },
+  };
 }
 
 export function readLog(path: string): HaloRecord[] {

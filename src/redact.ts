@@ -3,10 +3,18 @@
    same content the same way.
 
    Detection is two layers, both deterministic and explainable (never a model
-   judgement): (1) a list of known secret/PII patterns, and (2) a high-entropy
-   catch-all that flags long random-looking tokens the patterns miss (the
-   provider-specific key formats nobody has hardcoded yet). Over-redaction is
-   the safe failure: this artifact is meant to be handed to a third party. */
+   judgement): (1) a list of known secret/PII patterns — API keys, tokens,
+   private keys, DB connection strings, JWTs, credit cards, SSNs, emails, phone
+   numbers, IBANs, internal IPs — and (2) a high-entropy catch-all that flags
+   long random-looking tokens the patterns miss (the provider-specific key
+   formats nobody has hardcoded yet).
+
+   Coverage is by named pattern, so it is best-effort, not comprehensive:
+   free-form personal data with no fixed shape (a person's name, a postal
+   address) has no reliable pattern and is not detected. Treat redaction as
+   defense-in-depth for an artifact handed to a third party, not a guarantee
+   that a summary can carry no personal data (see LIMITS.md). Over-redaction is
+   the safe failure. */
 
 export type Severity = "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "INFO";
 
@@ -29,6 +37,8 @@ const PATTERNS: Array<[string, Severity, RegExp]> = [
   ["bearer_token", "HIGH",     /Bearer\s+[a-zA-Z0-9\-_.]{20,}/g],
   ["email",        "MEDIUM",   /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/g],
   ["ip_internal",  "MEDIUM",   /\b(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3})\b/g],
+  ["phone",        "MEDIUM",   /\b(?:\+?1[-.\s])?\(?\d{3}\)?[-.\s]\d{3}[-.\s]\d{4}\b/g],
+  ["iban",         "HIGH",     /\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b/g],
 ];
 
 export const SEVERITY_RANK: Record<string, number> = {
@@ -85,6 +95,11 @@ export function redactSample(ftype: string, value: unknown): string {
     return digits.length >= 4 ? "****" + digits.slice(-4) : "****";
   }
   if (ftype === "ssn") return v.length >= 4 ? "***-**-" + v.slice(-4) : "****";
+  if (ftype === "phone") {
+    const digits = v.replace(/\D/g, "");
+    return digits.length >= 4 ? "***-***-" + digits.slice(-4) : "****";
+  }
+  if (ftype === "iban") return v.length > 2 ? v.slice(0, 2) + "****" : "****";
   if (ftype === "ip_internal") {
     const parts = v.split(".");
     return parts.length === 4 ? [parts[0], parts[1], "*", "*"].join(".") : "****";

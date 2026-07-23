@@ -8,7 +8,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { Recorder } from "../src/record.ts";
+import { build, Recorder } from "../src/record.ts";
 import { verifyLog, readLog } from "../src/verify.ts";
 import { classifyTool, deriveScope, deriveOutcome } from "../src/integrations/common.ts";
 import { createLangChainHandler } from "../src/integrations/langchain.ts";
@@ -33,13 +33,18 @@ test("common: classification + scope mirror Python tables", () => {
   assert.equal(deriveScope("data_read", "read"), "fs.read");
 });
 
-test("common: deriveOutcome — error wins, explicit markers only, summaries redacted", () => {
+test("common: deriveOutcome — error wins, explicit markers only; build redacts+scans", () => {
   assert.equal(deriveOutcome({ ok: true })["status"], "ok");
   assert.equal(deriveOutcome({ is_error: true })["status"], "error");
   assert.equal(deriveOutcome({ status: "error" })["status"], "error");
   assert.equal(deriveOutcome("fine", new Error("boom"))["status"], "error");
+  // deriveOutcome carries the RAW summary; build() is the single place that
+  // scans it (so response secrets are flagged) and redacts it before storage.
   const out = deriveOutcome({ text: "key sk-ABCDEFGHIJKLMNOPQRSTUVWX here" });
-  assert.ok(!String(out["summary"]).includes("sk-ABCDEFGHIJKLMNOPQRSTUVWX"));
+  const rec = build("tool_call", "security", { tool: "t", outcome: out });
+  const flat = JSON.stringify(rec);
+  assert.ok(!flat.includes("sk-ABCDEFGHIJKLMNOPQRSTUVWX"), "secret survived into record");
+  assert.equal((rec["severity"] as string), "CRITICAL");
 });
 
 test("langchain: fake agent run → records on end and error, chain verifies", () => {

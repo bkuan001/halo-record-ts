@@ -76,10 +76,14 @@ function normPrincipal(principal: Record<string, unknown> | null | undefined) {
   return Object.keys(out).length ? out : null;
 }
 
-/* Normalize an ingested threats list into schema shape ([{type, ref?}]). Threats
-   are INGESTED from an upstream guardrail/detector — Halo records that a threat
-   was flagged, it does not itself judge or detect. */
+/* Normalize ingested threats into schema shape ([{type, ref?}]). Threats are
+   INGESTED from an upstream guardrail/detector — Halo records that a threat was
+   flagged, it does not itself judge or detect. Accepts a list of bare type
+   strings and/or {type, ref?} objects, or a single bare string (so
+   threats="prompt_injection" is one threat, not iterated character by
+   character). Entries without a type are dropped. */
 function normThreats(threats: unknown): Array<Record<string, string>> | null {
+  if (typeof threats === "string") threats = threats ? [threats] : [];
   if (!Array.isArray(threats) || threats.length === 0) return null;
   const out: Array<Record<string, string>> = [];
   for (const t of threats) {
@@ -96,8 +100,10 @@ function normThreats(threats: unknown): Array<Record<string, string>> | null {
 }
 
 // Which redaction finding types are personal data (vs. secrets/credentials).
-// data.pii_types is DERIVED from what the deterministic scanner already found.
-const PII_FINDING_TYPES = new Set(["email", "ssn", "credit_card"]);
+// data.pii_types is DERIVED from the scanner's named personal-data categories —
+// not comprehensive PII coverage (free-form names/addresses have no pattern; see
+// LIMITS.md).
+const PII_FINDING_TYPES = new Set(["email", "ssn", "credit_card", "phone", "iban"]);
 
 function piiTypesFromFindings(findings: Finding[]): string[] | null {
   const types = [...new Set(
@@ -198,7 +204,7 @@ export function build(actionType: string, category: string, opts: BuildOptions =
   if (subj !== null) record["subject"] = subj;
   const prin = normPrincipal(principal);
   if (prin !== null) record["principal"] = prin;
-  if (parentId) record["parent_id"] = String(parentId);
+  if (parentId != null && String(parentId) !== "") record["parent_id"] = String(parentId);
   const src = normalizeSource(source);
   if (src !== null) record["source"] = src;
   const thr = normThreats(threats);
