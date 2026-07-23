@@ -32,13 +32,13 @@ const PATTERNS: Array<[string, Severity, RegExp]> = [
   ["private_key",  "CRITICAL", /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/g],
   ["db_conn",      "CRITICAL", /(?:postgres|mysql|mongodb(?:\+srv)?|redis):\/\/[^\s"'<>]+/g],
   ["jwt",          "HIGH",     /eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g],
-  ["credit_card",  "HIGH",     /\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13}|6(?:011|5[0-9]{2})[0-9]{12})\b/g],
+  ["credit_card",  "HIGH",     /\b(?:4[0-9]{3}|5[1-5][0-9]{2}|3[47][0-9]{2}|6(?:011|5[0-9]{2}))(?:[ -]?[0-9]){9,13}\b/g],
   ["ssn",          "HIGH",     /\b\d{3}-\d{2}-\d{4}\b/g],
   ["bearer_token", "HIGH",     /Bearer\s+[a-zA-Z0-9\-_.]{20,}/g],
   ["email",        "MEDIUM",   /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/g],
   ["ip_internal",  "MEDIUM",   /\b(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3})\b/g],
   ["phone",        "MEDIUM",   /\b(?:\+?1[-.\s])?\(?\d{3}\)?[-.\s]\d{3}[-.\s]\d{4}\b/g],
-  ["iban",         "HIGH",     /\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b/g],
+  ["iban",         "HIGH",     /\b[A-Z]{2}[0-9]{2}(?:[ ]?[A-Z0-9]){11,30}\b/g],
 ];
 
 export const SEVERITY_RANK: Record<string, number> = {
@@ -107,11 +107,31 @@ export function redactSample(ftype: string, value: unknown): string {
   return "****";
 }
 
+/* Luhn check over the digits of `value` (13–19 long). Distinguishes a real card
+   number from an incidental digit run — e.g. the numeric body of an IBAN, whose
+   groups can look card-shaped — so a card finding is only raised for a number
+   that actually checksums as one. */
+function luhnOk(value: string): boolean {
+  const digits = String(value).replace(/\D/g, "");
+  if (digits.length < 13 || digits.length > 19) return false;
+  let total = 0;
+  for (let i = 0; i < digits.length; i++) {
+    let d = Number(digits[digits.length - 1 - i]);
+    if (i % 2 === 1) {
+      d *= 2;
+      if (d > 9) d -= 9;
+    }
+    total += d;
+  }
+  return total % 10 === 0;
+}
+
 /* Apply only the known-pattern redactions. */
 function applyPatterns(text: string): string {
   let out = text;
   for (const [name, , pattern] of PATTERNS) {
-    out = out.replace(new RegExp(pattern.source, pattern.flags), (m) => redactSample(name, m));
+    out = out.replace(new RegExp(pattern.source, pattern.flags), (m) =>
+      name === "credit_card" && !luhnOk(m) ? m : redactSample(name, m));
   }
   return out;
 }
@@ -140,6 +160,7 @@ export function scan(text: unknown): Finding[] {
     if (!matches) continue;
     let n = 0;
     for (const m of matches) {
+      if (name === "credit_card" && !luhnOk(m)) continue;
       const sample = redactSample(name, String(m).slice(0, 120));
       const key = name + ":" + sample;
       if (seen.has(key)) continue;

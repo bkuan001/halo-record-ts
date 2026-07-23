@@ -84,6 +84,8 @@ function normPrincipal(principal: Record<string, unknown> | null | undefined) {
    character). Entries without a type are dropped. */
 function normThreats(threats: unknown): Array<Record<string, string>> | null {
   if (typeof threats === "string") threats = threats ? [threats] : [];
+  // a single {type,...} object is one threat — do not iterate its keys
+  else if (threats && typeof threats === "object" && !Array.isArray(threats)) threats = [threats];
   if (!Array.isArray(threats) || threats.length === 0) return null;
   const out: Array<Record<string, string>> = [];
   for (const t of threats) {
@@ -212,6 +214,9 @@ export function build(actionType: string, category: string, opts: BuildOptions =
   // data.pii_types is derived from the scanner's personal-data findings and
   // merged with any caller-supplied request-context (region/purpose/...).
   const dataBlock: Record<string, unknown> = data && typeof data === "object" ? { ...data } : {};
+  // cross_region is a numeric field (0/1); coerce the intuitive boolean so a
+  // caller passing true never seals a schema-invalid record into the chain.
+  if (typeof dataBlock["cross_region"] === "boolean") dataBlock["cross_region"] = dataBlock["cross_region"] ? 1 : 0;
   const piiTypes = piiTypesFromFindings(findings);
   if (piiTypes !== null) dataBlock["pii_types"] = piiTypes;
   if (Object.keys(dataBlock).length) record["data"] = dataBlock;

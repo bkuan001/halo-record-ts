@@ -285,6 +285,28 @@ test("redaction: phone and IBAN are detected and counted as PII", () => {
   assert.ok(pii.includes("phone") && pii.includes("iban"));
 });
 
+test("redaction: cards tolerate separators; IBAN not misclassified; Luhn disambiguates", () => {
+  for (const v of ["4111 1111 1111 1111", "4111-1111-1111-1111", "5555 5555 5555 4444"]) {
+    assert.ok(scan(v).some((f) => f.type === "credit_card"), `card not flagged: ${v}`);
+    assert.ok(!redactText(v).includes(v), `raw card leaked: ${v}`);
+  }
+  const ibanTypes = new Set(scan("DE89 3704 0044 0532 0130 00").map((f) => f.type));
+  assert.ok(ibanTypes.has("iban"));
+  assert.ok(!ibanTypes.has("credit_card"), "IBAN misclassified as card");
+});
+
+test("threats: a single dict is one threat; a non-iterable is dropped, never thrown", () => {
+  const r = build("tool_call", "security", { tool: "t", threats: { type: "prompt_injection", ref: "R1" } });
+  assert.deepEqual(r["threats"], [{ type: "prompt_injection", ref: "R1" }]);
+  const r2 = build("tool_call", "security", { tool: "t", threats: 1 as unknown });
+  assert.ok(!("threats" in r2));
+});
+
+test("data.cross_region boolean is coerced to a number (no chain poison)", () => {
+  const r = build("read", "privacy", { tool: "t", data: { cross_region: true } });
+  assert.equal((r["data"] as Record<string, unknown>)["cross_region"], 1);
+});
+
 test("verify: delegation resolution is reported, orphans do not fail the chain", () => {
   const dir = mkdtempSync(join(tmpdir(), "halo-del-"));
   try {
