@@ -12,8 +12,13 @@ export {
 export { loadSchema, validateRecord, verifyRecords, verifyLog, readLog, type VerifyResult } from "./verify.ts";
 export {
   chainRoot, head, checkpoint, verifyCompleteness,
-  type Checkpoint, type CompletenessResult,
+  checkpointDigest, attachTimestamp, checkpointVerifiedTime, TimestampError,
+  type Checkpoint, type CompletenessResult, type TsaProof,
 } from "./anchor.ts";
+export {
+  buildRequest, requestToken, verify as verifyTimestamp,
+  DEFAULT_TSA_URL, type VerifyResult as TimestampVerifyResult,
+} from "./timestamp.ts";
 export { anchorRemote, fetchCheckpoints } from "./witness.ts";
 export {
   classifyTool, deriveScope, deriveOutcome, recordToolCall, recordModelCall,
