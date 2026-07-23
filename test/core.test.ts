@@ -211,3 +211,27 @@ test("append: fresh Recorder instance picks up existing chain head (cache fills 
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("provenance fields: principal/parentId/threats/pii_types populate and filter", () => {
+  const r = build("read", "privacy", {
+    tool: "t",
+    toolInput: "mail to jane@acme.com",
+    principal: { human_id: "u1", role_scope: "fin", bogus: "x" },
+    parentId: "p1",
+    threats: ["prompt_injection_indirect", { type: "policy_violation", ref: "R1" }, { ref: "drop" }],
+    data: { region: "eu" },
+  });
+  assert.deepEqual(r["principal"], { human_id: "u1", role_scope: "fin" });
+  assert.equal(r["parent_id"], "p1");
+  assert.deepEqual(r["threats"], [
+    { type: "prompt_injection_indirect" },
+    { type: "policy_violation", ref: "R1" },
+  ]);
+  assert.deepEqual(r["data"], { region: "eu", pii_types: ["email"] });
+
+  // back-compat: empty new fields are omitted entirely
+  const r2 = build("read", "privacy", { tool: "t", toolInput: "no pii" });
+  for (const k of ["principal", "parent_id", "threats", "data"]) {
+    assert.ok(!(k in r2), `${k} must be absent when empty`);
+  }
+});

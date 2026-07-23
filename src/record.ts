@@ -62,6 +62,50 @@ function normSubject(subject: string | { id: string; name?: string } | null | un
   return subject;
 }
 
+const PRINCIPAL_KEYS = ["human_id", "creator_id", "service_account", "role_scope"] as const;
+
+/* Keep only the four schema-defined principal layers; drop unknown keys and
+   empty values. Returns null if nothing usable remains. */
+function normPrincipal(principal: Record<string, unknown> | null | undefined) {
+  if (principal == null || typeof principal !== "object") return null;
+  const out: Record<string, string> = {};
+  for (const k of PRINCIPAL_KEYS) {
+    const v = (principal as Record<string, unknown>)[k];
+    if (v != null && v !== "") out[k] = String(v);
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+/* Normalize an ingested threats list into schema shape ([{type, ref?}]). Threats
+   are INGESTED from an upstream guardrail/detector — Halo records that a threat
+   was flagged, it does not itself judge or detect. */
+function normThreats(threats: unknown): Array<Record<string, string>> | null {
+  if (!Array.isArray(threats) || threats.length === 0) return null;
+  const out: Array<Record<string, string>> = [];
+  for (const t of threats) {
+    if (typeof t === "string") {
+      if (t) out.push({ type: t });
+    } else if (t && typeof t === "object" && (t as Record<string, unknown>)["type"]) {
+      const item: Record<string, string> = { type: String((t as Record<string, unknown>)["type"]) };
+      const ref = (t as Record<string, unknown>)["ref"];
+      if (ref != null && ref !== "") item["ref"] = String(ref);
+      out.push(item);
+    }
+  }
+  return out.length ? out : null;
+}
+
+// Which redaction finding types are personal data (vs. secrets/credentials).
+// data.pii_types is DERIVED from what the deterministic scanner already found.
+const PII_FINDING_TYPES = new Set(["email", "ssn", "credit_card"]);
+
+function piiTypesFromFindings(findings: Finding[]): string[] | null {
+  const types = [...new Set(
+    findings.map((f) => f.type).filter((t) => PII_FINDING_TYPES.has(t)),
+  )].sort();
+  return types.length ? types : null;
+}
+
 export interface BuildOptions {
   tool?: string;
   toolInput?: unknown;
@@ -76,6 +120,10 @@ export interface BuildOptions {
   subject?: string | { id: string; name?: string } | null;
   source?: string | Partial<Source> | null;
   summaries?: boolean;
+  principal?: Record<string, unknown> | null;
+  parentId?: string | null;
+  threats?: unknown;
+  data?: Record<string, unknown> | null;
 }
 
 export type HaloRecord = Record<string, unknown>;
@@ -88,6 +136,7 @@ export function build(actionType: string, category: string, opts: BuildOptions =
   const {
     tool, toolInput, sessionId = "local", agent, scope, decision = "allowed",
     approver, outcome: outcomeIn, ts, subject, source, summaries = true,
+    principal, parentId, threats, data,
   } = opts;
   let findings = opts.findings ?? null;
 
@@ -147,8 +196,19 @@ export function build(actionType: string, category: string, opts: BuildOptions =
   };
   const subj = normSubject(subject);
   if (subj !== null) record["subject"] = subj;
+  const prin = normPrincipal(principal);
+  if (prin !== null) record["principal"] = prin;
+  if (parentId) record["parent_id"] = String(parentId);
   const src = normalizeSource(source);
   if (src !== null) record["source"] = src;
+  const thr = normThreats(threats);
+  if (thr !== null) record["threats"] = thr;
+  // data.pii_types is derived from the scanner's personal-data findings and
+  // merged with any caller-supplied request-context (region/purpose/...).
+  const dataBlock: Record<string, unknown> = data && typeof data === "object" ? { ...data } : {};
+  const piiTypes = piiTypesFromFindings(findings);
+  if (piiTypes !== null) dataBlock["pii_types"] = piiTypes;
+  if (Object.keys(dataBlock).length) record["data"] = dataBlock;
   if (outcome !== null) record["outcome"] = outcome;
   return record;
 }
