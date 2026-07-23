@@ -307,6 +307,29 @@ test("data.cross_region boolean is coerced to a number (no chain poison)", () =>
   assert.equal((r["data"] as Record<string, unknown>)["cross_region"], 1);
 });
 
+test("a non-integer float in data/outcome is preserved as a string, never crashes hashing", () => {
+  const dir = mkdtempSync(join(tmpdir(), "halo-flt-"));
+  try {
+    const rec = new Recorder(join(dir, "c.jsonl"));
+    rec.append(build("read", "privacy", { tool: "t", data: { score: 0.87 } }));
+    rec.append(build("read", "privacy", { tool: "t", outcome: { status: "ok", n: 1.5 } }));
+    assert.equal(verifyLog(join(dir, "c.jsonl")).ok, true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("wrong-typed data keys are coerced/dropped, not sealed as invalid", () => {
+  assert.equal(((build("read", "privacy", { tool: "t", data: { cross_region: "yes" } })["data"]) as Record<string, unknown> | undefined)?.["cross_region"], undefined);
+  assert.equal((build("read", "privacy", { tool: "t", data: { region: 5 } })["data"] as Record<string, unknown>)["region"], "5");
+});
+
+test("ssn is detected in delimited forms", () => {
+  for (const v of ["123-45-6789", "123 45 6789"]) {
+    assert.ok(scan(v).some((f) => f.type === "ssn"), `ssn not flagged: ${v}`);
+  }
+});
+
 test("verify: delegation resolution is reported, orphans do not fail the chain", () => {
   const dir = mkdtempSync(join(tmpdir(), "halo-del-"));
   try {

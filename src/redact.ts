@@ -33,7 +33,7 @@ const PATTERNS: Array<[string, Severity, RegExp]> = [
   ["db_conn",      "CRITICAL", /(?:postgres|mysql|mongodb(?:\+srv)?|redis):\/\/[^\s"'<>]+/g],
   ["jwt",          "HIGH",     /eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g],
   ["credit_card",  "HIGH",     /\b(?:4[0-9]{3}|5[1-5][0-9]{2}|3[47][0-9]{2}|6(?:011|5[0-9]{2}))(?:[ -]?[0-9]){9,13}\b/g],
-  ["ssn",          "HIGH",     /\b\d{3}-\d{2}-\d{4}\b/g],
+  ["ssn",          "HIGH",     /\b\d{3}[- ]\d{2}[- ]\d{4}\b/g],
   ["bearer_token", "HIGH",     /Bearer\s+[a-zA-Z0-9\-_.]{20,}/g],
   ["email",        "MEDIUM",   /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/g],
   ["ip_internal",  "MEDIUM",   /\b(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3})\b/g],

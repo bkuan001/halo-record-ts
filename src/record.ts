@@ -114,6 +114,44 @@ function piiTypesFromFindings(findings: Finding[]): string[] | null {
   return types.length ? types : null;
 }
 
+/* Recursively make a value safe for RFC 8785 canonicalization, which permits only
+   integer-valued numbers: a non-integer number is preserved as a string instead
+   of crashing the recorder when the record is hashed. A no-op on any value that
+   was already canonicalizable, so it never changes an existing hash — instrumentation
+   must never take down the tool it is recording. */
+function canonSafe(value: unknown): unknown {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return Number.isInteger(value) ? value : String(value);
+  if (Array.isArray(value)) return value.map(canonSafe);
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) out[k] = canonSafe(v);
+    return out;
+  }
+  return value;
+}
+
+/* Normalize the caller's data block so intuitive input can neither crash the
+   recorder nor seal a schema-invalid record: region/purpose coerced to string,
+   cross_region to 0/1 from a bool or integer number (dropped if non-numeric so a
+   stray "yes" never poisons the chain); every other key made canon-safe. */
+function normData(data: unknown): Record<string, unknown> {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return {};
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(data as Record<string, unknown>)) {
+    if (k === "cross_region") {
+      if (typeof v === "boolean") out[k] = v ? 1 : 0;
+      else if (typeof v === "number" && Number.isInteger(v)) out[k] = v;
+      // a non-numeric cross_region is dropped, not sealed as invalid
+    } else if (k === "region" || k === "purpose") {
+      out[k] = typeof v === "string" ? v : String(v);
+    } else {
+      out[k] = canonSafe(v);
+    }
+  }
+  return out;
+}
+
 export interface BuildOptions {
   tool?: string;
   toolInput?: unknown;
@@ -213,15 +251,15 @@ export function build(actionType: string, category: string, opts: BuildOptions =
   if (thr !== null) record["threats"] = thr;
   // data.pii_types is derived from the scanner's personal-data findings and
   // merged with any caller-supplied request-context (region/purpose/...).
-  const dataBlock: Record<string, unknown> = data && typeof data === "object" ? { ...data } : {};
-  // cross_region is a numeric field (0/1); coerce the intuitive boolean so a
-  // caller passing true never seals a schema-invalid record into the chain.
-  if (typeof dataBlock["cross_region"] === "boolean") dataBlock["cross_region"] = dataBlock["cross_region"] ? 1 : 0;
+  const dataBlock = normData(data);
   const piiTypes = piiTypesFromFindings(findings);
   if (piiTypes !== null) dataBlock["pii_types"] = piiTypes;
   if (Object.keys(dataBlock).length) record["data"] = dataBlock;
   if (outcome !== null) record["outcome"] = outcome;
-  return record;
+  // Final guard: a caller-supplied non-integer number (a float score in
+  // data/outcome, say) must never crash the recorder when the record is hashed.
+  // No-op on a record that was already canonicalizable, so valid hashes are unchanged.
+  return canonSafe(record) as HaloRecord;
 }
 
 function stringify(value: unknown): string {
