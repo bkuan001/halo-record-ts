@@ -110,6 +110,27 @@ ecosystems, and identically to the Python adapters. Framework hook shapes are
 structural; if a framework changes its callback signature, the adapter is a
 small shim to update, not a rewrite.
 
+## Personal data in the chain
+
+The chain is append-only: anything sealed into a record stays there, because
+removing it would break verification for everything after it. Tool arguments are
+stored as a hash plus a redacted summary, never raw — but *redacted* is not
+*removed*: a name or postal address has no reliable pattern, so neither is detected
+nor masked. `subject` is also not the only field carrying text you supply —
+`principal`, `approver`, `sessionId`, `agent`, `authority`, `data` and the summaries
+all do.
+
+The pattern that works: put a stable pseudonymous id in the chain and keep the
+mapping to any individual in a system you can delete from, so an erasure request is
+satisfied by deleting the mapping. Keep `subject` pointing at the tenant
+organization, not a person. No setting enforces this — it is a discipline in how you
+call the recorder, and the same discipline as the Python package.
+
+Full field list, the reason the stored input fingerprint can confirm a guessable
+value even after the mapping is gone, and the questions a reviewer should ask:
+LIMITS.md section 12 in the
+[halo-record](https://github.com/bkuan001/halo-record) repo.
+
 ## Test
 
 ```
