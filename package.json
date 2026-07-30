@@ -1,6 +1,6 @@
 {
   "name": "halo-record",
-  "version": "0.2.28",
+  "version": "0.2.29",
   "description": "Tamper-evident, hash-chained Runtime Records for AI agents: the TypeScript recorder. Chain-format compatible with the Python halo-record package.",
   "type": "module",
   "main": "./dist/index.js",
@@ -35,5 +35,16 @@
   "homepage": "https://github.com/bkuan001/halo-record-ts#readme",
   "bugs": {
     "url": "https://github.com/bkuan001/halo-record-ts/issues"
-  }
+  },
+  "author": "Brian Kuan",
+  "keywords": [
+    "ai",
+    "agents",
+    "audit",
+    "tamper-evident",
+    "attestation",
+    "compliance",
+    "hash-chain",
+    "runtime-records"
+  ]
 }

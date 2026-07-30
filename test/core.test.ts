@@ -121,6 +121,30 @@ test("chain: build, append, verify, tamper detection", () => {
   }
 });
 
+test("lastRecordId tracks the tail and links delegation", () => {
+  const dir = mkdtempSync(join(tmpdir(), "halo-ts-"));
+  const path = join(dir, "chain.jsonl");
+  try {
+    const r = new Recorder(path);
+    assert.equal(r.lastRecordId(), null); // empty chain
+
+    const parent = r.record("tool_call", "security", { tool: "parent", subject: "acme" });
+    assert.equal(r.lastRecordId(), parent["record_id"]);
+
+    // the id links delegation: child carries parent_id = lastRecordId()
+    const child = r.record("tool_call", "security", {
+      tool: "child", subject: "acme", parentId: r.lastRecordId() ?? undefined,
+    });
+    assert.equal(child["parent_id"], parent["record_id"]);
+
+    // a fresh instance reads the id from disk
+    const r2 = new Recorder(path);
+    assert.equal(r2.lastRecordId(), child["record_id"]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("completeness: truncation below witnessed length goes RED while chain stays green", () => {
   const dir = mkdtempSync(join(tmpdir(), "halo-ts-"));
   const path = join(dir, "chain.jsonl");

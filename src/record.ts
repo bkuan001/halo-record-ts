@@ -285,6 +285,7 @@ function expandHome(p: string): string {
 export class Recorder {
   path: string;
   #lastHash: string | null = null;
+  #lastRecordId: string | null = null;
 
   constructor(path: string) {
     this.path = expandHome(path);
@@ -304,6 +305,22 @@ export class Recorder {
     }
   }
 
+  /* record_id of the most recent record in the chain, or null on an empty
+     chain. Pass it as parent_id on the next record to link a delegated action
+     to the action that spawned it. */
+  lastRecordId(): string | null {
+    if (this.#lastRecordId !== null) return this.#lastRecordId;
+    if (!existsSync(this.path)) return null;
+    const lines = readFileSync(this.path, "utf8").split("\n").filter((l) => l.trim());
+    if (lines.length === 0) return null;
+    try {
+      const rec = JSON.parse(lines[lines.length - 1]) as HaloRecord;
+      return (rec["record_id"] as string | undefined) ?? null;
+    } catch {
+      return null;
+    }
+  }
+
   append(record: HaloRecord): HaloRecord {
     const prev = this.lastHash();
     const integ = (record["integrity"] ??= {}) as Record<string, unknown>;
@@ -311,6 +328,7 @@ export class Recorder {
     integ["hash"] = computeHash(record, prev);
     appendFileSync(this.path, JSON.stringify(record) + "\n", "utf8");
     this.#lastHash = integ["hash"] as string;
+    this.#lastRecordId = (record["record_id"] as string | undefined) ?? null;
     return record;
   }
 
