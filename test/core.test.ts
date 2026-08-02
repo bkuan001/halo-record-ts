@@ -8,7 +8,7 @@ import { canon, computeHash, inputHash, GENESIS_PREV, sha256Hex } from "../src/c
 import { redactText, scan, topSeverity } from "../src/redact.ts";
 import { build, Recorder, TenantRecorder, normalizeSource } from "../src/record.ts";
 import { recordToolCall } from "../src/integrations/common.ts";
-import { verifyLog, verifyRecords, readLog } from "../src/verify.ts";
+import { verifyLog, verifyRecords, readLog, validateRecord } from "../src/verify.ts";
 import { checkpoint, verifyCompleteness, chainRoot, head } from "../src/anchor.ts";
 
 test("canon: deterministic key order, escapes, integers", () => {
@@ -324,6 +324,59 @@ test("threats: a single dict is one threat; a non-iterable is dropped, never thr
   assert.deepEqual(r["threats"], [{ type: "prompt_injection", ref: "R1" }]);
   const r2 = build("tool_call", "security", { tool: "t", threats: 1 as unknown });
   assert.ok(!("threats" in r2));
+});
+
+test("verification: the gate's claim seals, verifies, and tampering breaks the chain", () => {
+  const verification = {
+    status: "allowed",
+    verifier: "gate/1.0",
+    policy_ref: "sha256:policy",
+    checked_at: "2026-08-01T12:00:00Z",
+  };
+  const dir = mkdtempSync(join(tmpdir(), "halo-ver-"));
+  try {
+    const rec = new Recorder(join(dir, "v.jsonl"));
+    const r = rec.append(build("tool_call", "security", { tool: "t", verification }));
+    assert.deepEqual(r["verification"], verification);
+    assert.equal(validateRecord(r).length, 0);
+    assert.equal(verifyLog(join(dir, "v.jsonl")).ok, true);
+
+    const records = readLog(join(dir, "v.jsonl"));
+    (records[0]["verification"] as Record<string, unknown>)["status"] = "blocked";
+    assert.equal(verifyRecords(records).ok, false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("verification: schema rejects a status outside the enum", () => {
+  const r = build("tool_call", "security", {
+    tool: "t",
+    verification: { status: "allowed" },
+  });
+  (r["verification"] as Record<string, unknown>)["status"] = "approved";
+  assert.ok(validateRecord(r).some((e) => e.includes("verification.status")));
+});
+
+test("verification: invalid status is dropped loudly, absence is no claim", () => {
+  // a malformed claim is dropped, not sealed as schema-invalid — and the drop
+  // is loud: a single stderr line names the invalid status
+  const errors: string[] = [];
+  const original = console.error;
+  console.error = (...args: unknown[]) => { errors.push(args.map(String).join(" ")); };
+  try {
+    const r = build("tool_call", "security", { tool: "t", verification: { status: "approved" } });
+    assert.ok(!("verification" in r));
+  } finally {
+    console.error = original;
+  }
+  assert.equal(errors.length, 1);
+  assert.ok(errors[0].includes("verification block dropped"));
+  assert.ok(errors[0].includes('"approved"'));
+  // absent block = no verification claim was made, and no warning
+  const r2 = build("tool_call", "security", { tool: "t" });
+  assert.ok(!("verification" in r2));
+  assert.equal(validateRecord(r2).length, 0);
 });
 
 test("data.cross_region boolean is coerced to a number (no chain poison)", () => {

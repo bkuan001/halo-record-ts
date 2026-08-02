@@ -34,6 +34,37 @@ recorder.record("tool_call", "privacy", {
 });
 ```
 
+If a guardrail or policy layer checked the action, its verdict can ride on the record — an optional block recording what the gate decided, sealed into the hash chain like every other field:
+
+```ts
+recorder.record("tool_call", "security", {
+  tool: "payments.refund",
+  verification: {
+    status: "allowed", verifier: "gate/1.2",
+    policy_ref: "sha256:1f3a...", checked_at: "2026-08-01T12:00:00Z",
+  },
+});
+```
+
+which seals into the record as:
+
+```json
+"verification": {"status": "allowed", "verifier": "gate/1.2", "policy_ref": "sha256:1f3a...", "checked_at": "2026-08-01T12:00:00Z"}
+```
+
+`status` is required within the block; `verifier`, `policy_ref`, and `checked_at` are optional. What each status means:
+
+| Status | What the gate reports | Did the action execute? |
+|---|---|---|
+| `allowed` | it permitted the action | yes — the action proceeded |
+| `blocked` | it denied the action | determined by the integration, not by this field — a record may still carry an outcome, and a block does not by itself prove non-execution |
+| `modified` | it altered the action before execution — `action.input` describes the action **as executed**, post-modification | yes, in the altered form |
+| `unverified` | it ran (or was consulted) but made no determination — distinct from an absent block, which means no verification claim was made at all | yes — the action proceeded without a verdict |
+
+The block is supplied by the operator's integration code and records what it reports the gate said — the same trust posture as `principal` (see [LIMITS](https://github.com/bkuan001/halo-record/blob/main/LIMITS.md#11-verification-status-is-the-gates-report-not-halos-finding)). Sealing proves the status was not edited after the fact; it does not prove the check occurred, that the verdict was correct, or that a blocked action did not execute. This is not independent verification.
+
+For `policy_ref` to be usable as evidence, use a content hash of the ruleset and retain the ruleset artifact — an unresolvable label makes the field decorative.
+
 Verify a chain (yours or one you received):
 
 ```ts
@@ -128,7 +159,7 @@ call the recorder, and the same discipline as the Python package.
 
 Full field list, the reason the stored input fingerprint can confirm a guessable
 value even after the mapping is gone, and the questions a reviewer should ask:
-LIMITS.md section 12 in the
+LIMITS.md section 13 in the
 [halo-record](https://github.com/bkuan001/halo-record) repo.
 
 ## Test

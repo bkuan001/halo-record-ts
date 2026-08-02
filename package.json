@@ -1,7 +1,7 @@
 {
   "name": "halo-record",
-  "version": "0.2.29",
-  "description": "Tamper-evident, hash-chained Runtime Records for AI agents: the TypeScript recorder. Chain-format compatible with the Python halo-record package.",
+  "version": "0.2.30",
+  "description": "Open, tamper-evident runtime evidence for AI agents \u2014 hash-chained Runtime Records, dependency-free, verifiable by anyone. Chain-format compatible with the Python halo-record package.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

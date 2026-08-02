@@ -101,6 +101,35 @@ function normThreats(threats: unknown): Array<Record<string, string>> | null {
   return out.length ? out : null;
 }
 
+export const VERIFICATION_STATUSES = new Set(["allowed", "blocked", "modified", "unverified"]);
+const VERIFICATION_KEYS = ["verifier", "policy_ref", "checked_at"] as const;
+
+/* Normalize an ingested verification claim into schema shape. The block is
+   INGESTED from an upstream verification/policy gate — Halo seals what the gate
+   said at the moment of the action, it does not adjudicate it. A block whose
+   status is not one of the schema's enum values is dropped rather than sealed,
+   so a malformed claim never poisons the chain; an absent block means no
+   verification claim was made. */
+function normVerification(verification: unknown): Record<string, string> | null {
+  if (!verification || typeof verification !== "object" || Array.isArray(verification)) return null;
+  const v = verification as Record<string, unknown>;
+  const status = v["status"];
+  if (typeof status !== "string" || !VERIFICATION_STATUSES.has(status)) {
+    // A supplied-but-invalid claim usually means the integration is mis-wired;
+    // dropping it silently would hide that, so say so on stderr.
+    console.error(
+      `halo-record: verification block dropped — status ${JSON.stringify(status)} is not one ` +
+      "of allowed | blocked | modified | unverified; the record seals with no verification claim",
+    );
+    return null;
+  }
+  const out: Record<string, string> = { status };
+  for (const k of VERIFICATION_KEYS) {
+    if (v[k] != null && v[k] !== "") out[k] = String(v[k]);
+  }
+  return out;
+}
+
 // Which redaction finding types are personal data (vs. secrets/credentials).
 // data.pii_types is DERIVED from the scanner's named personal-data categories —
 // not comprehensive PII coverage (free-form names/addresses have no pattern; see
@@ -170,6 +199,7 @@ export interface BuildOptions {
   parentId?: string | null;
   threats?: unknown;
   data?: Record<string, unknown> | null;
+  verification?: Record<string, unknown> | null;
 }
 
 export type HaloRecord = Record<string, unknown>;
@@ -182,7 +212,7 @@ export function build(actionType: string, category: string, opts: BuildOptions =
   const {
     tool, toolInput, sessionId = "local", agent, scope, decision = "allowed",
     approver, outcome: outcomeIn, ts, subject, source, summaries = true,
-    principal, parentId, threats, data,
+    principal, parentId, threats, data, verification,
   } = opts;
   let findings = opts.findings ?? null;
 
@@ -249,6 +279,8 @@ export function build(actionType: string, category: string, opts: BuildOptions =
   if (src !== null) record["source"] = src;
   const thr = normThreats(threats);
   if (thr !== null) record["threats"] = thr;
+  const ver = normVerification(verification);
+  if (ver !== null) record["verification"] = ver;
   // data.pii_types is derived from the scanner's personal-data findings and
   // merged with any caller-supplied request-context (region/purpose/...).
   const dataBlock = normData(data);
