@@ -15,7 +15,7 @@ You are being asked to put a recorder inside your agent. You should not take tha
 - **Zero runtime dependencies.** `npm install halo-record` installs exactly one package; framework adapters use structural typing and never import the frameworks.
 - **Two opt-in network calls, and only these:** the witness anchor (sends only `{subject, count, head, chain_root}`) and the RFC 3161 timestamp (sends only a checkpoint's state hash to a Timestamp Authority). Both are off unless you call them; record contents never leave your infrastructure.
 - **Raw inputs never enter a record.** Arguments are hashed and summarized through a redaction pass before writing.
-- **Small enough to audit.** ~1,400 lines of TypeScript. Read all of it in an afternoon.
+- **Small enough to audit.** ~1,500 lines of TypeScript. Read all of it in an afternoon.
 - **Apache-2.0.**
 
 ## Use
@@ -33,6 +33,8 @@ recorder.record("tool_call", "privacy", {
   outcome: { status: "ok", summary: "sent" },    // redacted + scanned, same as input
 });
 ```
+
+One chain, one writer at a time: `Recorder` serializes appends within a process (fully synchronous) and across processes via a sidecar lock directory (`<chain>.lock.d`), held over the read-head-then-append sequence — so hook-style capture spawning one process per tool call cannot fork the chain. The Python package uses a different lock mechanism (`flock` on a `.lock` sidecar); the two do not interoperate, so writers in both languages sharing one chain should write per-process chains instead. [LIMITS.md section 9](https://github.com/bkuan001/halo-record/blob/main/LIMITS.md#9-single-writer-chains) covers the full boundary.
 
 If a guardrail or policy layer checked the action, its verdict can ride on the record — an optional block recording what the gate decided, sealed into the hash chain like every other field:
 

@@ -5,7 +5,7 @@
    independent. */
 
 import { randomUUID } from "node:crypto";
-import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 
@@ -307,61 +307,143 @@ function expandHome(p: string): string {
   return p.startsWith("~") ? join(homedir(), p.slice(1)) : p;
 }
 
+/* Cross-process append lock timings: short spins between attempts, a stale
+   window generous enough that no live append (milliseconds) ever gets its
+   lock stolen, and a hard timeout so a wedged chain fails loudly instead of
+   hanging the agent forever. */
+const LOCK_RETRY_MS = 4;
+const LOCK_STALE_MS = 30_000;
+const LOCK_TIMEOUT_MS = 10_000;
+
+const sleepCell = new Int32Array(new SharedArrayBuffer(4));
+function sleepSync(ms: number): void {
+  Atomics.wait(sleepCell, 0, 0, ms);
+}
+
 /* Append-only writer that maintains the hash chain in a JSONL file.
 
-   append() is fully synchronous, so within a Node process parallel tool calls
-   cannot interleave mid-append (the event loop runs the read-hash/write block
-   atomically). The chain head is cached after the first read so appending
-   stays O(1) per record instead of re-scanning the file. One Recorder
-   instance should own a given log file per process. */
+   Appends are serialized both within a process (append() is fully
+   synchronous, so parallel tool calls cannot interleave mid-append) and
+   across processes: a sidecar lock directory (`<chain>.lock.d`, atomic mkdir
+   on every platform Node supports) is held across the read-head-then-append
+   sequence, so hook-style capture that spawns one short-lived process per
+   tool call cannot fork the chain. The chain head is cached per instance and
+   re-read from disk whenever the file has grown underneath the cache.
+
+   The Python package's lock is an flock on a `<chain>.lock` sidecar — a
+   different mechanism. The two packages' locks do not interoperate; writers
+   in both languages sharing one chain should write per-process chains. */
 export class Recorder {
   path: string;
   #lastHash: string | null = null;
   #lastRecordId: string | null = null;
+  #lastSize: number | null = null;
+  #tailLoaded = false;
 
   constructor(path: string) {
     this.path = expandHome(path);
   }
 
-  lastHash(): string {
-    if (this.#lastHash !== null) return this.#lastHash;
-    if (!existsSync(this.path)) return GENESIS_PREV;
-    const lines = readFileSync(this.path, "utf8").split("\n").filter((l) => l.trim());
-    if (lines.length === 0) return GENESIS_PREV;
+  #size(): number {
     try {
-      const rec = JSON.parse(lines[lines.length - 1]) as HaloRecord;
-      const integ = (rec["integrity"] ?? {}) as Record<string, unknown>;
-      return (integ["hash"] as string) || GENESIS_PREV;
+      return statSync(this.path).size;
     } catch {
-      return GENESIS_PREV;
+      return 0;
     }
+  }
+
+  /* Read the chain head from disk, resetting the per-instance cache. */
+  #refreshTail(): void {
+    this.#lastHash = GENESIS_PREV;
+    this.#lastRecordId = null;
+    if (existsSync(this.path)) {
+      const lines = readFileSync(this.path, "utf8").split("\n").filter((l) => l.trim());
+      if (lines.length > 0) {
+        try {
+          const rec = JSON.parse(lines[lines.length - 1]) as HaloRecord;
+          const integ = (rec["integrity"] ?? {}) as Record<string, unknown>;
+          this.#lastHash = (integ["hash"] as string) || GENESIS_PREV;
+          this.#lastRecordId = (rec["record_id"] as string | undefined) ?? null;
+        } catch {
+          /* unparseable tail behaves as an empty chain, matching Python */
+        }
+      }
+    }
+    this.#lastSize = this.#size();
+    this.#tailLoaded = true;
+  }
+
+  /* Chain head, re-reading from disk if another process has appended since
+     this instance last looked. */
+  #currentTail(): void {
+    if (!this.#tailLoaded || this.#size() !== this.#lastSize) this.#refreshTail();
+  }
+
+  #acquireLock(): string {
+    const lockDir = this.path + ".lock.d";
+    const deadline = Date.now() + LOCK_TIMEOUT_MS;
+    for (;;) {
+      try {
+        mkdirSync(lockDir, { recursive: false });
+        return lockDir;
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+      }
+      try {
+        const held = statSync(lockDir);
+        if (Date.now() - held.mtimeMs > LOCK_STALE_MS) {
+          rmdirSync(lockDir); // holder crashed mid-append; reclaim
+          continue;
+        }
+      } catch {
+        continue; // holder released between the mkdir and the stat; retry now
+      }
+      if (Date.now() >= deadline) {
+        throw new Error(
+          `halo-record: could not acquire append lock ${lockDir} within ${LOCK_TIMEOUT_MS}ms`,
+        );
+      }
+      sleepSync(LOCK_RETRY_MS);
+    }
+  }
+
+  #releaseLock(lockDir: string): void {
+    try {
+      rmdirSync(lockDir);
+    } catch {
+      /* already reclaimed as stale — nothing to release */
+    }
+  }
+
+  lastHash(): string {
+    this.#currentTail();
+    return this.#lastHash as string;
   }
 
   /* record_id of the most recent record in the chain, or null on an empty
      chain. Pass it as parent_id on the next record to link a delegated action
      to the action that spawned it. */
   lastRecordId(): string | null {
-    if (this.#lastRecordId !== null) return this.#lastRecordId;
-    if (!existsSync(this.path)) return null;
-    const lines = readFileSync(this.path, "utf8").split("\n").filter((l) => l.trim());
-    if (lines.length === 0) return null;
-    try {
-      const rec = JSON.parse(lines[lines.length - 1]) as HaloRecord;
-      return (rec["record_id"] as string | undefined) ?? null;
-    } catch {
-      return null;
-    }
+    this.#currentTail();
+    return this.#lastRecordId;
   }
 
   append(record: HaloRecord): HaloRecord {
-    const prev = this.lastHash();
-    const integ = (record["integrity"] ??= {}) as Record<string, unknown>;
-    integ["prev_hash"] = prev;
-    integ["hash"] = computeHash(record, prev);
-    appendFileSync(this.path, JSON.stringify(record) + "\n", "utf8");
-    this.#lastHash = integ["hash"] as string;
-    this.#lastRecordId = (record["record_id"] as string | undefined) ?? null;
-    return record;
+    const lockDir = this.#acquireLock();
+    try {
+      this.#currentTail();
+      const prev = this.#lastHash as string;
+      const integ = (record["integrity"] ??= {}) as Record<string, unknown>;
+      integ["prev_hash"] = prev;
+      integ["hash"] = computeHash(record, prev);
+      appendFileSync(this.path, JSON.stringify(record) + "\n", "utf8");
+      this.#lastHash = integ["hash"] as string;
+      this.#lastRecordId = (record["record_id"] as string | undefined) ?? null;
+      this.#lastSize = this.#size();
+      return record;
+    } finally {
+      this.#releaseLock(lockDir);
+    }
   }
 
   /* Convenience: build + append in one call. */
