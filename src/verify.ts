@@ -93,6 +93,8 @@ export function verifyRecords(records: HaloRecord[], schema?: Schema): VerifyRes
   const s = schema ?? loadSchema();
   const problems: string[] = [];
   let prevHash = GENESIS_PREV;
+  // First record whose break makes everything after it unprovable.
+  let chainBrokenAt: number | null = null;
   const seenIds = new Set<string>();
   let parentLinks = 0;
   let orphanLinks = 0;
@@ -104,13 +106,19 @@ export function verifyRecords(records: HaloRecord[], schema?: Schema): VerifyRes
     const integ = (record["integrity"] ?? {}) as Record<string, unknown>;
     const declaredPrev = integ["prev_hash"] as string | undefined;
     const declaredHash = integ["hash"] as string | undefined;
-
-    if (declaredPrev !== prevHash) {
-      problems.push(`record ${n}: chain: prev_hash ${declaredPrev} does not match expected ${prevHash}`);
-    }
     const recomputed = computeHash(record, prevHash);
-    if (declaredHash !== recomputed) {
-      problems.push(`record ${n}: chain: hash ${declaredHash} does not match recomputed ${recomputed}`);
+
+    // After the first break, a per-record check here is uninformative (see
+    // the summary line below) — LIMITS.md section 9 covers why.
+    if (chainBrokenAt === null) {
+      if (declaredPrev !== prevHash) {
+        problems.push(`record ${n}: chain: prev_hash ${declaredPrev} does not match expected ${prevHash}`);
+        chainBrokenAt = n;
+      }
+      if (declaredHash !== recomputed) {
+        problems.push(`record ${n}: chain: hash ${declaredHash} does not match recomputed ${recomputed}`);
+        chainBrokenAt = n;
+      }
     }
 
     const parentId = record["parent_id"] as string | undefined;
@@ -121,8 +129,16 @@ export function verifyRecords(records: HaloRecord[], schema?: Schema): VerifyRes
     const recordId = record["record_id"] as string | undefined;
     if (recordId) seenIds.add(recordId);
 
-    prevHash = declaredHash || recomputed;
+    prevHash = recomputed; // never the record's own declared hash
   });
+
+  if (chainBrokenAt !== null && chainBrokenAt < records.length) {
+    problems.push(
+      `chain: record ${chainBrokenAt + 1} onward is not verifiable relative to the true chain ` +
+        `(the break at record ${chainBrokenAt} means nothing built on it can be proven intact or ` +
+        `shown to be further tampered — see LIMITS.md section 9).`,
+    );
+  }
 
   return {
     ok: problems.length === 0,

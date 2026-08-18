@@ -121,6 +121,55 @@ test("chain: build, append, verify, tamper detection", () => {
   }
 });
 
+test("chain: record after a stale-hash break is reported unverifiable, not graded clean", () => {
+  const dir = mkdtempSync(join(tmpdir(), "halo-ts-"));
+  const path = join(dir, "chain.jsonl");
+  try {
+    const r = new Recorder(path);
+    r.record("tool_call", "security", { tool: "a", subject: "acme" });
+    r.record("tool_call", "security", { tool: "b", subject: "acme" });
+    r.record("tool_call", "security", { tool: "c", subject: "acme" });
+
+    const records = readLog(path);
+    // content-tamper record 2, hash left stale
+    (records[1]["action"] as Record<string, unknown>)["tool"] = "malicious-action-injected";
+
+    const res = verifyRecords(records);
+    assert.ok(!res.ok);
+    const joined = res.problems.join("\n");
+    assert.match(joined, /record 2/);
+    assert.doesNotMatch(joined, /record 3: chain/);
+    const unverifiable = res.problems.filter((p) => p.includes("onward is not verifiable"));
+    assert.equal(unverifiable.length, 1);
+    assert.match(unverifiable[0], /record 3 onward/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("chain: one old break does not cascade into a report per later record", () => {
+  const dir = mkdtempSync(join(tmpdir(), "halo-ts-"));
+  const path = join(dir, "chain.jsonl");
+  try {
+    const r = new Recorder(path);
+    for (let i = 0; i < 50; i++) {
+      r.record("tool_call", "security", { tool: "t" + i, subject: "acme" });
+    }
+    const records = readLog(path);
+    (records[1]["action"] as Record<string, unknown>)["tool"] = "malicious-action-injected";
+
+    const res = verifyRecords(records);
+    assert.ok(!res.ok);
+    const chainLines = res.problems.filter((p) => /^record \d+: chain:/.test(p));
+    const unverifiableLines = res.problems.filter((p) => p.includes("onward is not verifiable"));
+    // Exactly the original break, nothing per later record.
+    assert.equal(chainLines.length, 1);
+    assert.equal(unverifiableLines.length, 1);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("lastRecordId tracks the tail and links delegation", () => {
   const dir = mkdtempSync(join(tmpdir(), "halo-ts-"));
   const path = join(dir, "chain.jsonl");
