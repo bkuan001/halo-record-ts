@@ -1,6 +1,6 @@
 {
   "name": "halo-record",
-  "version": "0.2.31",
+  "version": "0.2.32",
   "description": "Open, tamper-evident runtime evidence for AI agents \u2014 hash-chained Runtime Records, dependency-free, verifiable by anyone. Chain-format compatible with the Python halo-record package.",
   "type": "module",
   "main": "./dist/index.js",
