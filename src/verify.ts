@@ -80,6 +80,10 @@ export function validateRecord(record: HaloRecord, schema?: Schema): string[] {
 export interface VerifyResult {
   ok: boolean;
   count: number;
+  /* True when the chain held zero records. An empty chain "verifies" only in
+     the trivial sense — there is nothing to attest. Consumers gating on `ok`
+     should treat `empty` as its own state (the Python CLI exits 3 here). */
+  empty: boolean;
   problems: string[];
   /* Delegation referential integrity: how many records declared a parent_id,
      and how many of those did not resolve to an earlier record in this chain.
@@ -136,13 +140,14 @@ export function verifyRecords(records: HaloRecord[], schema?: Schema): VerifyRes
     problems.push(
       `chain: record ${chainBrokenAt + 1} onward is not verifiable relative to the true chain ` +
         `(the break at record ${chainBrokenAt} means nothing built on it can be proven intact or ` +
-        `shown to be further tampered — see LIMITS.md section 9).`,
+        `shown to be further tampered — see LIMITS.md section 9: https://github.com/bkuan001/halo-record/blob/main/LIMITS.md).`,
     );
   }
 
   return {
     ok: problems.length === 0,
     count: records.length,
+    empty: records.length === 0,
     problems,
     delegation: { links: parentLinks, orphans: orphanLinks },
   };

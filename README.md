@@ -73,7 +73,7 @@ Verify a chain (yours or one you received):
 import { verifyLog, readLog, verifyCompleteness } from "halo-record";
 import { fetchCheckpoints } from "halo-record";
 
-const integrity = verifyLog("acme.jsonl");   // nothing edited
+const integrity = verifyLog("acme.jsonl");   // nothing edited (empty:true = nothing to attest, not a pass)
 const cps = await fetchCheckpoints("https://witness.example", "acme");
 const completeness = verifyCompleteness(readLog("acme.jsonl"), cps); // nothing omitted
 ```
