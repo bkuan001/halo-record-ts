@@ -14,3 +14,4 @@ CLAUDE.local.md
 
 # Recorded agent data — the recorder emits .jsonl at runtime; keep real records out of git
 *.jsonl
+*.tgz
