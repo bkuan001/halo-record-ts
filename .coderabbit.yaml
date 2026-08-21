@@ -1,0 +1,47 @@
+reviews:
+  profile: assertive
+  request_changes_workflow: false
+  high_level_summary: true
+  path_instructions:
+    - path: "src/canon.ts"
+      instructions: >
+        Canonicalization and hashing code is security-critical. Verify RFC 8785
+        conformance, numeric edge cases (non-integer numbers, integers beyond
+        2^53-1, BigInt, negative values), and that no change can alter the
+        canonical bytes of a previously valid record. Flag any divergence from
+        the Python implementation (bkuan001/halo-record src/halo_record/canon.py).
+    - path: "src/record.ts"
+      instructions: >
+        Record construction feeds the hash chain. Verify hash stability for
+        existing records, that caller-supplied values (including BigInt) can
+        never crash the recorder, and behavioral parity with the Python
+        implementation. Flag any change that could alter the canonical bytes
+        of a previously valid record.
+    - path: "src/verify.ts"
+      instructions: >
+        Verification logic must never trust attacker-writable fields: the
+        chain anchor is always recomputed, never a record's self-declared
+        hash. Flag any change that weakens tamper detection, grades records
+        after a break individually, or relaxes schema validation.
+    - path: "src/redact.ts"
+      instructions: >
+        Redaction must be fail-closed: verify no secret or PII pattern can
+        survive into a stored record, and that pattern changes do not narrow
+        existing coverage.
+    - path: "halo-record.schema.json"
+      instructions: >
+        The schema must remain byte-identical to the Python repository's
+        src/halo_record/halo-record.schema.json. Flag any change here as
+        requiring the same change there.
+    - path: "test/**"
+      instructions: >
+        Changes touching canonicalization, hashing, or verification should
+        carry regression tests covering both the data and outcome paths,
+        negative values, boundary values, and BigInt inputs.
+    - path: "*.md"
+      instructions: >
+        Documentation claims must match actual code behavior; flag any stated
+        guarantee the code does not enforce. Integrity claims should be scoped
+        (tamper-evident relative to an established head, not absolute).
+chat:
+  auto_reply: true
