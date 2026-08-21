@@ -1,6 +1,6 @@
 {
   "name": "halo-record",
-  "version": "0.2.33",
+  "version": "0.2.34",
   "description": "Open, tamper-evident runtime evidence for AI agents \u2014 hash-chained Runtime Records, dependency-free, verifiable by anyone. Chain-format compatible with the Python halo-record package.",
   "type": "module",
   "main": "./dist/index.js",
@@ -18,7 +18,8 @@
   "scripts": {
     "test": "node --test test/core.test.ts test/integrations.test.ts test/timestamp.test.ts test/concurrency.test.ts",
     "typecheck": "tsc --noEmit",
-    "build": "tsc"
+    "build": "tsc",
+    "prepublishOnly": "npm test && npm run build"
   },
   "engines": {
     "node": ">=20"
