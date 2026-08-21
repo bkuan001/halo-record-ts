@@ -143,14 +143,35 @@ function piiTypesFromFindings(findings: Finding[]): string[] | null {
   return types.length ? types : null;
 }
 
+/* The largest integer IEEE-754 float64 represents exactly (2**53 - 1). JSON
+   readers that parse numbers into float64 silently round integers beyond this,
+   so a record hashed over the exact literal would fail re-verification in
+   those readers. */
+const MAX_EXACT_JSON_INT = 9007199254740991;
+
 /* Recursively make a value safe for RFC 8785 canonicalization, which permits only
    integer-valued numbers: a non-integer number is preserved as a string instead
-   of crashing the recorder when the record is hashed. A no-op on any value that
-   was already canonicalizable, so it never changes an existing hash — instrumentation
-   must never take down the tool it is recording. */
+   of crashing the recorder when the record is hashed, and an integer whose
+   magnitude exceeds MAX_EXACT_JSON_INT is preserved as an exact decimal string
+   so every JSON reader recomputes the same canonical bytes the recorder hashed.
+   A BigInt is kept as a number while exact everywhere and preserved as a decimal
+   string beyond that, matching the Python recorder's handling of large ints.
+   A no-op on any value that was already canonicalizable everywhere, so it never
+   changes the hash of such records — instrumentation must never take down the
+   tool it is recording. */
 function canonSafe(value: unknown): unknown {
   if (typeof value === "boolean") return value;
-  if (typeof value === "number") return Number.isInteger(value) ? value : String(value);
+  if (typeof value === "number") {
+    if (!Number.isInteger(value)) return String(value);
+    if (value >= -MAX_EXACT_JSON_INT && value <= MAX_EXACT_JSON_INT) return value;
+    return BigInt(value).toString();
+  }
+  if (typeof value === "bigint") {
+    if (value >= BigInt(-MAX_EXACT_JSON_INT) && value <= BigInt(MAX_EXACT_JSON_INT)) {
+      return Number(value);
+    }
+    return value.toString();
+  }
   if (Array.isArray(value)) return value.map(canonSafe);
   if (value && typeof value === "object") {
     const out: Record<string, unknown> = {};

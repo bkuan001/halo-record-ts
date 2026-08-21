@@ -445,6 +445,49 @@ test("a non-integer float in data/outcome is preserved as a string, never crashe
   }
 });
 
+test("an integer beyond 2**53-1 is preserved as an exact decimal string", () => {
+  // float64-based JSON parsers (every browser) round larger integers, which
+  // would make an untampered chain fail self-verification
+  const r = build("tool_call", "security", { tool: "t", data: { big: 1e21, n: 42 } });
+  const data = r["data"] as Record<string, unknown>;
+  assert.equal(data["big"], "1000000000000000000000"); // never "1e+21"
+  assert.equal(data["n"], 42);
+});
+
+test("a BigInt is exact-preserved: number when safe, decimal string beyond", () => {
+  const r = build("tool_call", "security", {
+    tool: "t",
+    data: { small: 7n, ts_ns: 1704067200000000001n },
+    outcome: { status: "ok", request_id: 9007199254740993n },
+  });
+  const data = r["data"] as Record<string, unknown>;
+  const outcome = r["outcome"] as Record<string, unknown>;
+  assert.equal(data["small"], 7);
+  assert.equal(data["ts_ns"], "1704067200000000001");
+  assert.equal(outcome["request_id"], "9007199254740993");
+});
+
+test("boundary integers ±(2**53-1) keep their type (existing hashes unchanged)", () => {
+  const r = build("tool_call", "security", {
+    tool: "t", data: { max: 9007199254740991, min: -9007199254740991 },
+  });
+  const data = r["data"] as Record<string, unknown>;
+  assert.equal(data["max"], 9007199254740991);
+  assert.equal(data["min"], -9007199254740991);
+});
+
+test("a chain carrying oversized integers self-verifies", () => {
+  const dir = mkdtempSync(join(tmpdir(), "halo-bigint-"));
+  try {
+    const rec = new Recorder(join(dir, "c.jsonl"));
+    rec.append(build("tool_call", "security", { tool: "db.query", toolInput: { q: "1" }, data: { ts_ns: 1704067200000000001n } }));
+    rec.append(build("tool_call", "security", { tool: "db.query", toolInput: { q: "2" }, outcome: { status: "ok", bytes: 1e21 } }));
+    assert.equal(verifyLog(join(dir, "c.jsonl")).ok, true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("wrong-typed data keys are coerced/dropped, not sealed as invalid", () => {
   assert.equal(((build("read", "privacy", { tool: "t", data: { cross_region: "yes" } })["data"]) as Record<string, unknown> | undefined)?.["cross_region"], undefined);
   assert.equal((build("read", "privacy", { tool: "t", data: { region: 5 } })["data"] as Record<string, unknown>)["region"], "5");
