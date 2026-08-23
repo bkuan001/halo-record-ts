@@ -15,7 +15,7 @@ You are being asked to put a recorder inside your agent. You should not take tha
 - **Zero runtime dependencies.** `npm install halo-record` installs exactly one package; framework adapters use structural typing and never import the frameworks.
 - **Two opt-in network calls, and only these:** the witness anchor (sends only `{subject, count, head, chain_root}`) and the RFC 3161 timestamp (sends only a checkpoint's state hash to a Timestamp Authority). Both are off unless you call them; record contents never leave your infrastructure.
 - **Raw inputs never enter a record.** Arguments are hashed and summarized through a redaction pass before writing.
-- **Small enough to audit.** ~1,800 lines of TypeScript. Read all of it in an afternoon.
+- **Small enough to audit.** ~1,800 lines of TypeScript (code lines, not counting blanks and comments). Read all of it in an afternoon.
 - **Apache-2.0.**
 - **Limits are documented, not implied.** What the chain does and does not prove — completeness, identity, capture boundary — is in the Python repo's [LIMITS.md](https://github.com/bkuan001/halo-record/blob/main/LIMITS.md); every limit there applies to this package too.
 
@@ -25,7 +25,7 @@ You are being asked to put a recorder inside your agent. You should not take tha
 npm install halo-record
 ```
 
-The package is ESM-only (`"type": "module"`): use `import` from an ESM project or an `.mjs` file — `require()` will not load it. Node >= 20.
+The package is ESM (`"type": "module"`). Node >= 20. On Node >= 22.12, `require("halo-record")` also works from CommonJS projects (stable `require(esm)`); on Node 20.x, use `import` from an ESM project or an `.mjs` file — `require()` will not load it there. If you typecheck with TypeScript 7, add `"types": ["node"]` to your `tsconfig.json` (the package uses Node builtins like `Buffer`).
 
 ## Use
 
