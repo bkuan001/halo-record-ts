@@ -4,6 +4,8 @@ Tamper-evident audit trails for AI agents — the TypeScript recorder.
 
 **Chain-format compatible with the Python `halo-record` package.** Records written here verify with either verifier, anchor via the same witness protocol, and render in the same Runtime Report. Canonicalization (RFC 8785 subset), hashing, redaction patterns, provenance tagging, and the witness wire protocol are ports of the Python implementation; cross-language interop is the package's defining test.
 
+**Featured in [Help Net Security](https://www.helpnetsecurity.com/2026/08/31/halo-record-open-source-ai-agent-audit-trail/)** (August 2026).
+
 Zero runtime dependencies (Node ≥ 20, `node:crypto` / `node:fs`).
 
 > **Using halo-record, or thinking about it?** Tell me who you are and what for → [Who's using halo-record?](https://github.com/bkuan001/halo-record/discussions/7)
