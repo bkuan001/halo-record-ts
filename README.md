@@ -162,7 +162,9 @@ stored as a hash plus a redacted summary, never raw — but *redacted* is not
 *removed*: a name or postal address has no reliable pattern, so neither is detected
 nor masked. `subject` is also not the only field carrying text you supply —
 `principal`, `approver`, `sessionId`, `agent`, `authority`, `data` and the summaries
-all do.
+all do. The `authority` block in particular is stored exactly as supplied and is
+exempt from the redaction pass — its hashes-and-refs convention (no raw prompts,
+policy text, or secrets) is a producer discipline no code path checks.
 
 The pattern that works: put a stable pseudonymous id in the chain and keep the
 mapping to any individual in a system you can delete from, so an erasure request is
