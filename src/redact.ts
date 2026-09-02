@@ -21,7 +21,8 @@ export type Severity = "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "INFO";
 export interface Finding {
   type: string;
   severity: Severity;
-  sample: string;
+  /** Redacted excerpt. Omitted in hash-only records (summaries: false). */
+  sample?: string;
 }
 
 const PATTERNS: Array<[string, Severity, RegExp]> = [
@@ -29,14 +30,18 @@ const PATTERNS: Array<[string, Severity, RegExp]> = [
   ["gcp_api_key",  "CRITICAL", /AIza[0-9A-Za-z_\-]{35}/g],
   ["stripe_key",   "CRITICAL", /(?:sk|rk|pk)_(?:live|test)_[0-9a-zA-Z]{16,}/g],
   ["github_token", "CRITICAL", /(?:gh[opsu]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{22,})/g],
-  ["private_key",  "CRITICAL", /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/g],
+  // Matches the whole PEM block when the footer is present (so the key body is
+  // masked, not just the header line). When the block is truncated, consumes
+  // the base64-shaped body lines that follow the header, so a partial key
+  // still cannot leak through the mask.
+  ["private_key",  "CRITICAL", /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----(?:[\s\S]*?-----END (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|(?:\n[A-Za-z0-9+\/=]+(?![^\n]))*)/g],
   ["db_conn",      "CRITICAL", /(?:postgres|mysql|mongodb(?:\+srv)?|redis):\/\/[^\s"'<>]+/g],
   ["jwt",          "HIGH",     /eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g],
   ["credit_card",  "HIGH",     /\b(?:4[0-9]{3}|5[1-5][0-9]{2}|3[47][0-9]{2}|6(?:011|5[0-9]{2}))(?:[ -]?[0-9]){9,13}\b/g],
   ["ssn",          "HIGH",     /\b\d{3}[- ]\d{2}[- ]\d{4}\b/g],
   ["bearer_token", "HIGH",     /Bearer\s+[a-zA-Z0-9\-_.]{20,}/g],
   ["email",        "MEDIUM",   /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/g],
-  ["ip_internal",  "MEDIUM",   /\b(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3})\b/g],
+  ["ip_internal",  "MEDIUM",   /\b(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})\b/g],
   ["phone",        "MEDIUM",   /\b(?:\+?1[-.\s])?\(?\d{3}\)?[-.\s]\d{3}[-.\s]\d{4}\b/g],
   ["iban",         "HIGH",     /\b[A-Z]{2}[0-9]{2}(?:[ ]?[A-Z0-9]){11,30}\b/g],
 ];
@@ -84,7 +89,10 @@ export function redactSample(ftype: string, value: unknown): string {
   }
   if (ftype === "db_conn") return v.replace(/:\/\/([^:/@]+):[^@]+@/, "://$1:****@");
   if (ftype === "bearer_token") return "Bearer ****";
-  if (ftype === "private_key") return "-----BEGIN PRIVATE KEY----- ****";
+  // Deliberately header-free: a mask that echoed the PEM header would trip
+  // secret scanners on every artifact that contains it, and re-redaction
+  // would not be idempotent.
+  if (ftype === "private_key") return "[PRIVATE KEY REDACTED]";
   if (ftype === "jwt") return "eyJ****";
   if (ftype === "api_key" || ftype === "gcp_api_key" || ftype === "stripe_key" || ftype === "github_token") {
     return v.length > 4 ? v.slice(0, 4) + "****" : "****";
