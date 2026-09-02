@@ -1,6 +1,6 @@
 {
   "name": "halo-record",
-  "version": "0.2.41",
+  "version": "0.2.42",
   "description": "Open, tamper-evident audit trails for AI agents \u2014 hash-chained Runtime Records, dependency-free, verifiable by anyone. Chain-format compatible with the Python halo-record package.",
   "type": "module",
   "main": "./dist/index.js",
@@ -16,7 +16,7 @@
     "halo-record.schema.json"
   ],
   "scripts": {
-    "test": "node --test test/core.test.ts test/integrations.test.ts test/timestamp.test.ts test/concurrency.test.ts test/redaction.test.ts test/caveat.test.ts",
+    "test": "node --test test/core.test.ts test/integrations.test.ts test/timestamp.test.ts test/concurrency.test.ts test/redaction.test.ts test/caveat.test.ts test/authority.test.ts",
     "typecheck": "tsc --noEmit",
     "build": "tsc",
     "prepublishOnly": "npm test && npm run build"
