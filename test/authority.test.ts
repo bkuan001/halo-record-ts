@@ -87,3 +87,10 @@ test("hash-only rejects payload-shaped status and hash, keeps valid hash", () =>
   });
   assert.deepEqual(Object.keys(good["outcome"] as object).sort(), ["hash", "status"]);
 });
+
+test("authority: binary values are refused, never sealed decodably", () => {
+  assert.throws(() => build("tool_call", "security", {
+    tool: "t",
+    authority: { snapshot_id: "auth_1", blob: Buffer.from("sk-" + "a1B2".repeat(8)) },
+  }), TypeError);
+});

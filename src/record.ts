@@ -239,6 +239,12 @@ export type HaloRecord = Record<string, unknown>;
    Free-form text is not detected (LIMITS §6). */
 function sanitizeAuthority(authority: Record<string, unknown>): Record<string, unknown> {
   const walk = (v: unknown): unknown => {
+    if (v instanceof Uint8Array || v instanceof ArrayBuffer || ArrayBuffer.isView(v)) {
+      // Parity with the Python package, whose canonicalization refuses bytes:
+      // binary sealed as an enumerated object is a decodable secret in disguise.
+      throw new TypeError(
+        "cannot seal a binary value inside the authority block — decode it or hash it first");
+    }
     if (Array.isArray(v)) return v.map(walk);
     if (v && typeof v === "object") {
       const out: Record<string, unknown> = {};
