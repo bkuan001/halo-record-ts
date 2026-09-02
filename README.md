@@ -200,6 +200,10 @@ halo report acme.jsonl -o acme.html
 
 You end up looking at your agent's Runtime Report in a browser: every action, its provenance, the chain verdict, and (if anchored) the completeness verdict. Reference implementation and recorder internals: [halo-record (Python)](https://github.com/bkuan001/halo-record).
 
+## Community Examples
+
+[trail-halo-poc](https://github.com/AmeyParle/trail-halo-poc) — community proof of concept binding a Halo record's principal authority to TRAIL credentials: a reciprocal org–agent binding and org-signed scope grants recorded into a Halo chain, with an adversarial verification suite (built against the Python package; the chain format is language-independent).
+
 ## License
 
 Apache-2.0
