@@ -19,7 +19,8 @@
     "test": "node --test test/core.test.ts test/integrations.test.ts test/timestamp.test.ts test/concurrency.test.ts test/redaction.test.ts test/caveat.test.ts test/authority.test.ts",
     "typecheck": "tsc --noEmit",
     "build": "tsc",
-    "prepublishOnly": "npm test && npm run build"
+    "prepublishOnly": "npm test && npm run build",
+    "prepare": "npm run build"
   },
   "engines": {
     "node": ">=20"
