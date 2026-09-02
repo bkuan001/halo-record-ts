@@ -144,6 +144,13 @@ function applyPatterns(text: string): string {
   return out;
 }
 
+/* Mask only the named secret/PII patterns — no high-entropy catch-all. For
+   fields whose legitimate values ARE high-entropy (authority hashes and refs),
+   where the catch-all would mangle the very thing the field exists to carry. */
+export function maskKnownSecrets(text: unknown): string {
+  return applyPatterns(String(text));
+}
+
 export function redactText(text: unknown): string {
   // Patterns first, then sweep the residual for high-entropy tokens the
   // patterns did not cover. Running entropy on the residual (not the raw text)

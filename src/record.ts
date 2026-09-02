@@ -9,8 +9,8 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, rmdirSync, statSyn
 import { join } from "node:path";
 import { homedir } from "node:os";
 
-import { GENESIS_PREV, computeHash, inputHash } from "./canon.ts";
-import { redactText, scan, topSeverity, type Finding } from "./redact.ts";
+import { GENESIS_PREV, canon, computeHash, inputHash, sha256Hex } from "./canon.ts";
+import { maskKnownSecrets, redactText, scan, topSeverity, type Finding } from "./redact.ts";
 
 export const SCHEMA_VERSION = "0.1";
 
@@ -216,6 +216,10 @@ export interface BuildOptions {
   subject?: string | { id: string; name?: string } | null;
   source?: string | Partial<Source> | null;
   summaries?: boolean;
+  /* Snapshot of the rules/tooling context that governed the run — hashes and
+     refs, not raw prompts or private policy text. Known secret formats are
+     masked at seal time; free-form text is not detected (LIMITS §6). */
+  authority?: Record<string, unknown> | null;
   principal?: Record<string, unknown> | null;
   parentId?: string | null;
   threats?: unknown;
@@ -229,11 +233,54 @@ export type HaloRecord = Record<string, unknown>;
    hashed and, by default, a redacted summary is stored; raw arguments never
    enter the record. Outcome summaries are redacted and scanned symmetrically
    with input. */
+/* Copy an authority block, masking any value that matches a named secret
+   pattern. The high-entropy catch-all is deliberately NOT applied: legitimate
+   authority values are hashes and refs, which look exactly like entropy.
+   Free-form text is not detected (LIMITS §6). */
+function sanitizeAuthority(authority: Record<string, unknown>): Record<string, unknown> {
+  const walk = (v: unknown): unknown => {
+    if (Array.isArray(v)) return v.map(walk);
+    if (v && typeof v === "object") {
+      const out: Record<string, unknown> = {};
+      for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+        let mk = maskKnownSecrets(k);
+        if (mk !== k) {
+          console.error(
+            "halo-record: masked a known secret format used as an authority " +
+            "KEY — keys should be names, never credentials");
+        }
+        while (mk in out) mk = mk + "~"; // masked-key collision: keep both, distinctly
+        out[mk] = walk(x);
+      }
+      return out;
+    }
+    if (typeof v === "string") {
+      const masked = maskKnownSecrets(v);
+      if (masked !== v) {
+        console.error(
+          "halo-record: masked a known secret format inside the authority " +
+          "block — authority values should be hashes and refs, never raw credentials");
+        return masked;
+      }
+    }
+    return v;
+  };
+  return walk({ ...authority }) as Record<string, unknown>;
+}
+
+/* Content identity of a full authority body (excluding the compaction marker),
+   for guarding snapshot_id reuse. */
+export function authorityContentHash(authority: Record<string, unknown>): string {
+  const body = Object.fromEntries(
+    Object.entries(authority).filter(([k]) => k !== "same_as_previous"));
+  return sha256Hex(canon(canonSafe(body)));
+}
+
 export function build(actionType: string, category: string, opts: BuildOptions = {}): HaloRecord {
   const {
     tool, toolInput, sessionId = "local", agent, scope, decision = "allowed",
     approver, outcome: outcomeIn, ts, subject, source, summaries = true,
-    principal, parentId, threats, data, verification,
+    authority, principal, parentId, threats, data, verification,
   } = opts;
   let findings = opts.findings ?? null;
 
@@ -268,7 +315,15 @@ export function build(actionType: string, category: string, opts: BuildOptions =
       outcomeSummaryRaw = String(outcome["summary"]);
     }
     if (!summaries) {
-      delete outcome["summary"];
+      // Hash-only records keep only the schema's non-text outcome fields —
+      // and only when their values have the schema's shape, so payload text
+      // cannot ride into a hash-only record under those key names.
+      const kept: Record<string, unknown> = {};
+      const st = outcome["status"];
+      if (st === "ok" || st === "error" || st === "denied") kept["status"] = st;
+      const h = outcome["hash"];
+      if (typeof h === "string" && /^(?:sha256:)?[0-9a-fA-F]{16,64}$/.test(h)) kept["hash"] = h;
+      outcome = kept;
     } else if (outcomeSummaryRaw !== null) {
       outcome["summary"] = redactText(outcomeSummaryRaw).slice(0, 200);
     }
@@ -305,6 +360,9 @@ export function build(actionType: string, category: string, opts: BuildOptions =
   };
   const subj = normSubject(subject);
   if (subj !== null) record["subject"] = subj;
+  if (authority != null && typeof authority === "object") {
+    record["authority"] = sanitizeAuthority(authority);
+  }
   const prin = normPrincipal(principal);
   if (prin !== null) record["principal"] = prin;
   if (parentId != null && String(parentId) !== "") record["parent_id"] = String(parentId);
@@ -370,6 +428,12 @@ export class Recorder {
   path: string;
   #lastHash: string | null = null;
   #lastRecordId: string | null = null;
+  #lastAuthoritySnapshotId: string | null = null;
+  // Content hash of the last full authority body, when the tail carries one.
+  // A compacted tail (same_as_previous) leaves this null: across a process
+  // restart the snapshot_id is trusted — the reuse guard is strongest where
+  // the hazard lives, inside a single producing process.
+  #lastAuthorityHash: string | null = null;
   #lastSize: number | null = null;
   #tailLoaded = false;
 
@@ -389,6 +453,8 @@ export class Recorder {
   #refreshTail(): void {
     this.#lastHash = GENESIS_PREV;
     this.#lastRecordId = null;
+    this.#lastAuthoritySnapshotId = null;
+    this.#lastAuthorityHash = null;
     if (existsSync(this.path)) {
       const lines = readFileSync(this.path, "utf8").split("\n").filter((l) => l.trim());
       if (lines.length > 0) {
@@ -397,6 +463,12 @@ export class Recorder {
           const integ = (rec["integrity"] ?? {}) as Record<string, unknown>;
           this.#lastHash = (integ["hash"] as string) || GENESIS_PREV;
           this.#lastRecordId = (rec["record_id"] as string | undefined) ?? null;
+          const auth = rec["authority"];
+          if (auth && typeof auth === "object" && !Array.isArray(auth)) {
+            const a = auth as Record<string, unknown>;
+            this.#lastAuthoritySnapshotId = (a["snapshot_id"] as string | undefined) ?? null;
+            if (!a["same_as_previous"]) this.#lastAuthorityHash = authorityContentHash(a);
+          }
         } catch {
           /* unparseable tail behaves as an empty chain, matching Python */
         }
@@ -466,17 +538,53 @@ export class Recorder {
     try {
       this.#currentTail();
       const prev = this.#lastHash as string;
+      this.#dedupeAuthority(record);
       const integ = (record["integrity"] ??= {}) as Record<string, unknown>;
       integ["prev_hash"] = prev;
       integ["hash"] = computeHash(record, prev);
       appendFileSync(this.path, JSON.stringify(record) + "\n", "utf8");
       this.#lastHash = integ["hash"] as string;
       this.#lastRecordId = (record["record_id"] as string | undefined) ?? null;
+      const auth = record["authority"];
+      if (auth && typeof auth === "object" && !Array.isArray(auth)) {
+        const a = auth as Record<string, unknown>;
+        this.#lastAuthoritySnapshotId = (a["snapshot_id"] as string | undefined) ?? null;
+        if (!a["same_as_previous"]) this.#lastAuthorityHash = authorityContentHash(a);
+      } else {
+        this.#lastAuthoritySnapshotId = null;
+        this.#lastAuthorityHash = null;
+      }
       this.#lastSize = this.#size();
       return record;
     } finally {
       this.#releaseLock(lockDir);
     }
+  }
+
+  /* Compact a repeated authority block — but only when the CONTENT also
+     matches the previous full snapshot. A reused snapshot_id over changed
+     authority state is stored in full (and said loudly): silently collapsing
+     it would misattribute the run to rules that were no longer in effect. */
+  #dedupeAuthority(record: HaloRecord): void {
+    const auth = record["authority"];
+    if (!auth || typeof auth !== "object" || Array.isArray(auth)) return;
+    const a = auth as Record<string, unknown>;
+    const snapshotId = a["snapshot_id"] as string | undefined;
+    if (!snapshotId || snapshotId !== this.#lastAuthoritySnapshotId) return;
+    const contentHash = authorityContentHash(a);
+    if (contentHash === this.#lastAuthorityHash) {
+      record["authority"] = { snapshot_id: snapshotId, same_as_previous: true };
+      return;
+    }
+    if (this.#lastAuthorityHash === null) {
+      // Fresh process over a compacted tail: the previous full body is
+      // unknown, so store this one in full rather than trust the id.
+      return;
+    }
+    console.error(
+      `halo-record: authority snapshot_id ${JSON.stringify(snapshotId)} reused ` +
+      "with changed content — storing the full snapshot; a snapshot_id must " +
+      "stay stable only while the underlying authority is unchanged");
   }
 
   /* Convenience: build + append in one call. */
