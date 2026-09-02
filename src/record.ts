@@ -279,6 +279,18 @@ export function build(actionType: string, category: string, opts: BuildOptions =
     if (toolInput !== undefined) findings.push(...scan(stringify(toolInput)));
     if (outcomeSummaryRaw !== null) findings.push(...scan(outcomeSummaryRaw));
   }
+  if (!summaries) {
+    // Hash-only records carry finding types and severities, never excerpts.
+    // Non-object entries pass through untouched and fail (or not) exactly
+    // where they always did.
+    findings = findings.map((f) => {
+      if (f && typeof f === "object") {
+        const { sample: _sample, ...rest } = f;
+        return rest;
+      }
+      return f;
+    });
+  }
 
   const record: HaloRecord = {
     schema_version: SCHEMA_VERSION,
