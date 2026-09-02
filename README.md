@@ -45,6 +45,20 @@ recorder.record("tool_call", "privacy", {
 });
 ```
 
+To answer "under what rules did this run happen?", attach an authority snapshot — hashes and refs, not raw prompts or policy text (known secret formats are masked at seal time; free-form text is not detected — see the Python repo's LIMITS §6). Consecutive records with the same `snapshot_id` and unchanged content are compacted; a reused id over changed content is stored in full, with a notice. Hash-only capture (`summaries: false`) drops summaries and finding excerpts:
+
+```ts
+import { build, Recorder } from "halo-record";
+
+const rec = new Recorder("acme.jsonl");
+rec.append(build("tool_call", "security", {
+  tool: "crm.lookup",
+  toolInput: { account: "acct-9" },
+  authority: { snapshot_id: "auth_1", rules_hash: "sha256:..." },
+  summaries: false,                       // hash-only: no summaries, no excerpts
+}));
+```
+
 One chain, one writer at a time: `Recorder` serializes appends within a process (fully synchronous) and across processes via a sidecar lock directory (`<chain>.lock.d`), held over the read-head-then-append sequence — so hook-style capture spawning one process per tool call cannot fork the chain. The Python package uses a different lock mechanism (`flock` on a `.lock` sidecar); the two do not interoperate, so writers in both languages sharing one chain should write per-process chains instead. [LIMITS.md section 9](https://github.com/bkuan001/halo-record/blob/main/LIMITS.md#9-single-writer-chains) covers the full boundary.
 
 If a guardrail or policy layer checked the action, its verdict can ride on the record — an optional block recording what the gate decided, sealed into the hash chain like every other field:
