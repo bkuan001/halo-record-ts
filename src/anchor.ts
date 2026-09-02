@@ -173,38 +173,54 @@ export interface CompletenessResult {
   tsa_time?: string;
   tsa_time_status?: string;
   tsa_unverified?: number;
+  /** Present on every verdict for a subjectless chain — the chain_root match
+   *  key is defeatable by dropping the first record. */
+  subjectless_caveat?: string;
 }
 
 /* Check a presented chain against what the notary independently witnessed.
    ok=null: no witnesses (unknown, not a failure). ok=false: a witnessed record
    is missing or altered. ok=true: every witnessed checkpoint still matches. */
 export function verifyCompleteness(records: HaloRecord[], checkpoints: Checkpoint[]): CompletenessResult {
+  // Subjectless chains are matched by chain_root, and dropping the first
+  // record changes the root (see matches) — so every verdict on such a chain
+  // carries the caveat loudly rather than leaving the weakness implicit.
+  const out = (d: CompletenessResult): CompletenessResult => {
+    if (records.length > 0 && subjectId(records) === null) {
+      d.subjectless_caveat =
+        "checkpoints for a subjectless chain are matched by chain_root, " +
+        "which changes if the first record is dropped — a 'no witnesses' " +
+        "verdict cannot be distinguished from a re-rooted chain; assign a " +
+        "subject to records for a stable witness key";
+    }
+    return d;
+  };
   const relevant = checkpoints.filter((c) => matches(c, records));
   if (relevant.length === 0) {
-    return { ok: null, why: "no witnesses for this chain", witnessed: 0 };
+    return out({ ok: null, why: "no witnesses for this chain", witnessed: 0 });
   }
 
   const brokenAt = chainIntact(records);
   if (brokenAt) {
-    return { ok: false, why: "chain integrity broken", at: brokenAt, witnessed: relevant.length };
+    return out({ ok: false, why: "chain integrity broken", at: brokenAt, witnessed: relevant.length });
   }
 
   const latest = Math.max(...relevant.map((c) => c.count));
   if (records.length < latest) {
-    return {
+    return out({
       ok: false, why: "chain truncated below witnessed length",
       have: records.length, witnessed_count: latest, witnessed: relevant.length,
-    };
+    });
   }
 
   for (const c of relevant) {
     const n = c.count;
     if (n < 1 || n > records.length) {
-      return { ok: false, why: "witnessed count out of range", at: n, witnessed: relevant.length };
+      return out({ ok: false, why: "witnessed count out of range", at: n, witnessed: relevant.length });
     }
     const integ = (records[n - 1]["integrity"] ?? {}) as Record<string, unknown>;
     if (integ["hash"] !== c.head) {
-      return { ok: false, why: "record altered or dropped before witnessed point", at: n, witnessed: relevant.length };
+      return out({ ok: false, why: "record altered or dropped before witnessed point", at: n, witnessed: relevant.length });
     }
   }
 
@@ -230,5 +246,5 @@ export function verifyCompleteness(records: HaloRecord[], checkpoints: Checkpoin
     result.tsa_time_status = "claimed — verify the TSA signature with `openssl ts -verify`";
   }
   if (tsaUnverified) result.tsa_unverified = tsaUnverified; // a stored token that does not bind this state
-  return result;
+  return out(result);
 }
