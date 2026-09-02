@@ -15,7 +15,7 @@ Zero runtime dependencies (Node ≥ 20, `node:crypto` / `node:fs`).
 You are being asked to put a recorder inside your agent. You should not take that on faith:
 
 - **Zero runtime dependencies.** `npm install halo-record` installs exactly one package; framework adapters use structural typing and never import the frameworks.
-- **Two opt-in network calls, and only these:** the witness anchor (sends only `{subject, count, head, chain_root}`) and the RFC 3161 timestamp (sends only a checkpoint's state hash to a Timestamp Authority). Both are off unless you call them; record contents never leave your infrastructure.
+- **Three opt-in network calls, and only these:** the witness anchor (sends only `{subject, count, head, chain_root}`), the witness checkpoint fetch (sends the subject id being checked), and the RFC 3161 timestamp (sends only a checkpoint's state hash to a Timestamp Authority). All are off unless you call them; record contents never leave your infrastructure.
 - **Raw inputs never enter a record.** Arguments are hashed and summarized through a redaction pass before writing.
 - **Small enough to audit.** ~1,800 lines of TypeScript (code lines, not counting blanks and comments). Read all of it in an afternoon.
 - **Apache-2.0.**
