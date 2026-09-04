@@ -16,7 +16,7 @@
     "halo-record.schema.json"
   ],
   "scripts": {
-    "test": "node --test test/core.test.ts test/integrations.test.ts test/timestamp.test.ts test/concurrency.test.ts test/redaction.test.ts test/caveat.test.ts test/authority.test.ts",
+    "test": "node --test test/core.test.ts test/integrations.test.ts test/modelcall.test.ts test/timestamp.test.ts test/concurrency.test.ts test/redaction.test.ts test/caveat.test.ts test/authority.test.ts",
     "typecheck": "tsc --noEmit",
     "build": "tsc",
     "prepublishOnly": "npm test && npm run build",
