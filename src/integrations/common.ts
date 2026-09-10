@@ -4,6 +4,7 @@
    and append one Halo Runtime Record. No framework imports here. */
 
 import { inputHash } from "../canon.ts";
+import { pathValue } from "../redact.ts";
 import { build, type HaloRecord, type Source } from "../record.ts";
 
 export type ActionClass = "connector" | "exec" | "data_write" | "data_read" | "network" | "other";
@@ -55,7 +56,15 @@ function extractText(obj: unknown, depth = 0): string {
   if (typeof obj === "string") return obj;
   if (Array.isArray(obj)) return obj.map((i) => extractText(i, depth + 1)).join(" ");
   if (obj !== null && typeof obj === "object") {
-    return Object.values(obj).map((v) => extractText(v, depth + 1)).join(" ");
+    // Path-typed fields (filePath, path, …) name where a tool acted; the input
+    // already carries them, and in a free-text summary they read as
+    // high-entropy secrets. Leave them out of the response summary.
+    const parts: string[] = [];
+    for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
+      if (Array.isArray(v)) parts.push(extractText(v.filter((el) => !pathValue(k, el)), depth + 1));
+      else if (!pathValue(k, v)) parts.push(extractText(v, depth + 1));
+    }
+    return parts.filter((p) => p).join(" ");
   }
   return String(obj);
 }
@@ -69,6 +78,15 @@ function extractText(obj: unknown, depth = 0): string {
    as ones passed in its arguments) and then redacts it before it is stored.
    Redacting here would hide response-borne findings from that scan, so the raw
    text is handed to build() and never stored raw. */
+/* True for an explicit non-zero exit status, whether the harness sent it as a
+   number or as a numeric string. */
+function nonzeroExit(v: unknown): boolean {
+  if (v == null || typeof v === "boolean") return false;
+  if (typeof v === "number") return v !== 0;
+  if (typeof v === "string") { const n = Number(v.trim()); return v.trim() !== "" && !Number.isNaN(n) && n !== 0; }
+  return false;
+}
+
 export function deriveOutcome(response: unknown, error?: unknown): Record<string, unknown> {
   if (error !== undefined && error !== null) {
     return {
@@ -81,10 +99,16 @@ export function deriveOutcome(response: unknown, error?: unknown): Record<string
   if (response !== null && typeof response === "object" && !Array.isArray(response)) {
     const r = response as Record<string, unknown>;
     if (r["is_error"] || r["error"] || r["status"] === "error") status = "error";
+    for (const k of ["exit_code", "exitCode", "returncode", "return_code"]) {
+      if (nonzeroExit(r[k])) status = "error";
+    }
   }
   const out: Record<string, unknown> = { status, hash: inputHash(response ?? null) };
   const summary = extractText(response ?? "");
   if (summary) out["summary"] = summary;
+  // The summary leaves path-typed fields out; the scanner must not. `build`
+  // scans this structure field by field and drops it before sealing.
+  out["_scan"] = response;
   return out;
 }
 

@@ -96,6 +96,11 @@ test("normalizeSource: hook is labeled and stays on the ingested tier", () => {
   assert.equal(normalizeSource("hook")!.adapter, "hook");
 });
 
+test("normalizeSource: codex hook is labeled on the ingested tier", () => {
+  assert.equal(normalizeSource("codex_hook")!.capture, "ingested");
+  assert.equal(normalizeSource("codex_hook")!.via, "Codex CLI PostToolUse hook");
+});
+
 test("normalizeSource: unknown ids fall back to ingested", () => {
   assert.equal(normalizeSource("mcp")!.capture, "captured");
   assert.equal(normalizeSource("mystery")!.capture, "ingested");

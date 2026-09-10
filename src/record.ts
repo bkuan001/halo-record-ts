@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 
 import { GENESIS_PREV, canon, computeHash, inputHash, sha256Hex } from "./canon.ts";
-import { maskKnownSecrets, redactText, scan, topSeverity, type Finding } from "./redact.ts";
+import { maskKnownSecrets, redactFields, redactText, scan, scanFields, topSeverity, type Finding } from "./redact.ts";
 
 export const SCHEMA_VERSION = "0.1";
 
@@ -34,6 +34,7 @@ export const SOURCES: Record<string, Source> = {
   vercel_ai:     { adapter: "vercel_ai",     via: "Vercel AI SDK",             capture: "captured" },
   claude_agent_sdk: { adapter: "claude_agent_sdk", via: "Claude Agent SDK",    capture: "captured" },
   hook:          { adapter: "hook",          via: "Claude Code PostToolUse hook", capture: "ingested" },
+  codex_hook:    { adapter: "codex_hook",    via: "Codex CLI PostToolUse hook",   capture: "ingested" },
   otel:          { adapter: "otel",          via: "OpenTelemetry GenAI spans", capture: "ingested" },
   litellm:       { adapter: "litellm",       via: "LiteLLM gateway",           capture: "ingested" },
   langfuse:      { adapter: "langfuse",      via: "Langfuse traces",           capture: "ingested" },
@@ -69,6 +70,13 @@ const PRINCIPAL_KEYS = ["human_id", "creator_id", "service_account", "role_scope
    empty values. Returns null if nothing usable remains. */
 function normPrincipal(principal: Record<string, unknown> | null | undefined) {
   if (principal == null || typeof principal !== "object") return null;
+  const dropped = Object.keys(principal).filter((k) => !(PRINCIPAL_KEYS as readonly string[]).includes(k)).sort();
+  if (dropped.length) {
+    // A misspelled or unsupported key usually means a mis-wired integration;
+    // say so rather than sealing a record with no principal.
+    process.stderr.write(
+      `halo-record: principal key(s) dropped — ${dropped.join(", ")} not in human_id | creator_id | service_account | role_scope\n`);
+  }
   const out: Record<string, string> = {};
   for (const k of PRINCIPAL_KEYS) {
     const v = (principal as Record<string, unknown>)[k];
@@ -308,7 +316,7 @@ export function build(actionType: string, category: string, opts: BuildOptions =
   }
   if (toolInput !== undefined) {
     const inp: Record<string, unknown> = { hash: inputHash(toolInput) };
-    if (summaries) inp["summary"] = redactText(stringify(toolInput)).slice(0, 200);
+    if (summaries) inp["summary"] = stringify(redactFields(toolInput)).slice(0, 200);
     action["input"] = inp;
   }
 
@@ -316,8 +324,10 @@ export function build(actionType: string, category: string, opts: BuildOptions =
   // sealed/served and so it can be scanned for secrets alongside the input.
   let outcome: Record<string, unknown> | null = null;
   let outcomeSummaryRaw: string | null = null;
+  let outcomeScan: unknown = undefined;
   if (outcomeIn != null) {
     outcome = { ...outcomeIn };
+    if ("_scan" in outcome) { outcomeScan = outcome["_scan"]; delete outcome["_scan"]; }
     if ("summary" in outcome && outcome["summary"] != null) {
       outcomeSummaryRaw = String(outcome["summary"]);
     }
@@ -338,8 +348,10 @@ export function build(actionType: string, category: string, opts: BuildOptions =
 
   if (findings == null) {
     findings = [];
-    if (toolInput !== undefined) findings.push(...scan(stringify(toolInput)));
-    if (outcomeSummaryRaw !== null) findings.push(...scan(outcomeSummaryRaw));
+    const seen = new Set<string>();
+    if (toolInput !== undefined) findings.push(...scanFields(toolInput, true, 0, seen));
+    if (outcomeScan !== undefined) findings.push(...scanFields(outcomeScan, true, 0, seen));
+    else if (outcomeSummaryRaw !== null) findings.push(...scan(outcomeSummaryRaw));
   }
   if (!summaries) {
     // Hash-only records carry finding types and severities, never excerpts.
