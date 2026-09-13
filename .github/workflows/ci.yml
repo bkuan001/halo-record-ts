@@ -6,11 +6,14 @@ on:
   pull_request:
 
 jobs:
+  # The suite runs TypeScript test files directly, which needs Node's native
+  # type stripping (22+). Node 20 is still a supported runtime for the package,
+  # so it typechecks and builds below.
   test:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        node-version: ["20", "22"]
+        node-version: ["22", "24"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -28,3 +31,17 @@ jobs:
         run: |
           curl -sSf https://raw.githubusercontent.com/bkuan001/halo-record/main/src/halo_record/halo-record.schema.json -o /tmp/py-schema.json
           cmp /tmp/py-schema.json halo-record.schema.json
+
+  build-node20:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install
+        run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Build
+        run: npm run build
