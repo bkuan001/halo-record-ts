@@ -41,6 +41,23 @@ export const SOURCES: Record<string, Source> = {
   gateway:       { adapter: "gateway",       via: "LLM gateway / proxy log",   capture: "ingested" },
 };
 
+// Diagnostics must never throw: JSON.stringify rejects BigInt, and a dropped
+// declaration is not worth crashing the recorder over.
+function shown(v: unknown): string {
+  if (typeof v === "bigint") return v.toString() + "n";
+  try {
+    return JSON.stringify(v) ?? String(v);
+  } catch {
+    return String(v);
+  }
+}
+
+// Values the verifier accepts for authorization.decision and source.capture.
+// build() drops anything else loudly rather than seal a record that can never
+// verify (an append-only chain has no undo). Parity with the Python recorder.
+const DECISIONS = new Set(["allowed", "denied", "human_approved"]);
+const CAPTURE_TIERS = new Set(["captured", "ingested"]);
+
 /* Unknown ids fall back to "ingested" — the conservative tier, so an
    unrecognized origin is never overstated as boundary-captured. */
 export function normalizeSource(source: string | Partial<Source> | null | undefined): Source | null {
@@ -51,6 +68,15 @@ export function normalizeSource(source: string | Partial<Source> | null | undefi
   const src = { ...source } as Source;
   src.capture ??= "ingested";
   src.via ??= src.adapter ?? "unknown";
+  if (typeof src.capture !== "string" || !CAPTURE_TIERS.has(src.capture)) {
+    // The verifier rejects any other tier; drop the tier claim loudly rather
+    // than guess one — the record seals without a source.
+    console.error(
+      `halo-record: source.capture=${shown(src.capture)} is not one of ` +
+        [...CAPTURE_TIERS].sort().join(", ") + "; source dropped (the record seals without a provenance tag)",
+    );
+    return null;
+  }
   return src;
 }
 
@@ -200,9 +226,18 @@ function normData(data: unknown): Record<string, unknown> {
   for (const [k, v] of Object.entries(data as Record<string, unknown>)) {
     if (k === "cross_region") {
       if (typeof v === "boolean") out[k] = v ? 1 : 0;
-      else if (typeof v === "number" && Number.isInteger(v)) out[k] = v;
-      // a non-numeric cross_region is dropped, not sealed as invalid
+      else if (typeof v === "number" && (v === 0 || v === 1)) out[k] = v;
+      else {
+        // Anything but a boolean or 0/1 is dropped, not sealed as invalid —
+        // and said aloud, so a residency test never finds a blank it cannot
+        // explain. Parity with the Python recorder.
+        console.error(
+          `halo-record: data.cross_region=${shown(v)} is not a boolean or 0/1; ` +
+            "dropped (the column will read as 'not declared')",
+        );
+      }
     } else if (k === "region" || k === "purpose") {
+      if (v === null || v === undefined) continue; // absent, not the string "null"
       out[k] = typeof v === "string" ? v : String(v);
     } else {
       out[k] = canonSafe(v);
@@ -293,10 +328,21 @@ export function authorityContentHash(authority: Record<string, unknown>): string
 
 export function build(actionType: string, category: string, opts: BuildOptions = {}): HaloRecord {
   const {
-    tool, toolInput, sessionId = "local", agent, scope, decision = "allowed",
-    approver, outcome: outcomeIn, ts, subject, source, summaries = true,
+    tool, toolInput, sessionId = "local", agent, scope, approver,
+    outcome: outcomeIn, ts, subject, source, summaries = true,
     authority, principal, parentId, threats, data, verification,
   } = opts;
+  let decision = opts.decision;
+  if (decision !== undefined && decision !== null && (typeof decision !== "string" || !DECISIONS.has(decision))) {
+    // Same discipline as verification.status: the verifier rejects any other
+    // value, so an integration typo must not seal a chain that can never
+    // verify. Drop the decision loudly; scope/approver still seal.
+    console.error(
+      `halo-record: authorization.decision=${shown(decision)} is not one of ` +
+        [...DECISIONS].sort().join(", ") + "; dropped",
+    );
+    decision = undefined;
+  }
   let findings = opts.findings ?? null;
 
   if (!ACTION_TYPES.has(actionType)) {
@@ -308,10 +354,20 @@ export function build(actionType: string, category: string, opts: BuildOptions =
 
   const action: Record<string, unknown> = { type: actionType, category };
   if (tool !== undefined) action["tool"] = tool;
-  if (scope !== undefined || decision !== undefined) {
-    const auth: Record<string, unknown> = { decision };
+  // The authorization block appears only when the integration supplies one.
+  // Nothing is defaulted: a record with no decision says "no gate reported",
+  // never "allowed".
+  if (scope !== undefined || (decision !== undefined && decision !== null) || approver !== undefined) {
+    const auth: Record<string, unknown> = {};
+    if (decision !== undefined && decision !== null) auth["decision"] = decision;
     if (scope !== undefined) auth["scope"] = scope;
     if (approver !== undefined) auth["approver"] = approver;
+    else if (decision === "human_approved") {
+      console.error(
+        "halo-record: decision is human_approved but no approver was supplied; " +
+          "the record seals without one",
+      );
+    }
     action["authorization"] = auth;
   }
   if (toolInput !== undefined) {
@@ -608,7 +664,10 @@ export class Recorder {
 
   /* Convenience: build + append in one call. */
   record(actionType: string, category: string, opts: BuildOptions = {}): HaloRecord {
-    return this.append(build(actionType, category, opts));
+    // The plain recorder is a boundary capture, so it stamps the same
+    // provenance tag the Python record_call() path does; pass `source` to
+    // override.
+    return this.append(build(actionType, category, { source: "recorder", ...opts }));
   }
 }
 

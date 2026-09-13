@@ -26,7 +26,7 @@ export interface Finding {
 }
 
 const PATTERNS: Array<[string, Severity, RegExp]> = [
-  ["api_key",      "CRITICAL", /(?:sk-[a-zA-Z0-9]{20,}|AKIA[0-9A-Z]{16}|xox[baprs]-[a-zA-Z0-9-]{10,})/g],
+  ["api_key",      "CRITICAL", /(?:sk-(?:[a-z0-9]{2,10}-)*[a-zA-Z0-9]{16,}|AKIA[0-9A-Z]{16}|xox[baprs]-[a-zA-Z0-9-]{10,})/g],
   ["gcp_api_key",  "CRITICAL", /AIza[0-9A-Za-z_\-]{35,}/g],
   ["aws_secret_key", "CRITICAL", /aws_secret_access_key(?:\s*[=:]\s*|\s+)["']?[A-Za-z0-9/+=]{40}/gi],
   ["webhook_url",   "CRITICAL", /https:\/\/(?:hooks\.slack\.com\/services\/|discord(?:app)?\.com\/api\/webhooks\/|[a-z0-9.-]+\.webhook\.office\.com\/webhookb2\/|outlook\.office\.com\/webhook\/)[^\s"'<>]+/g],
@@ -39,13 +39,17 @@ const PATTERNS: Array<[string, Severity, RegExp]> = [
   ["private_key",  "CRITICAL", /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----(?:[\s\S]*?-----END (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|(?:\n[A-Za-z0-9+\/=]+(?![^\n]))*)/g],
   ["db_conn",      "CRITICAL", /(?:postgres|mysql|mongodb(?:\+srv)?|redis):\/\/[^\s"'<>]+/g],
   ["jwt",          "HIGH",     /eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g],
+  // IBAN runs BEFORE credit_card: an IBAN whose digit body happens to Luhn-
+  // check would otherwise be card-masked first, leaving country/check digits
+  // and the tail exposed. Shape-tolerant (case, space/dot/hyphen groups) and
+  // gated on the mod-97 check, so ordinary identifiers are not classified.
+  ["iban",         "HIGH",     /\b[A-Za-z]{2}[0-9]{2}(?:[ .-]?[A-Za-z0-9]){11,30}\b/g],
   ["credit_card",  "HIGH",     /\b(?:4[0-9]{3}|5[1-5][0-9]{2}|3[47][0-9]{2}|6(?:011|5[0-9]{2}))(?:[ -]?[0-9]){9,13}\b/g],
   ["ssn",          "HIGH",     /\b\d{3}[- ]\d{2}[- ]\d{4}\b/g],
   ["bearer_token", "HIGH",     /Bearer\s+[a-zA-Z0-9\-_.]{20,}/g],
   ["email",        "MEDIUM",   /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/g],
   ["ip_internal",  "MEDIUM",   /\b(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})\b/g],
   ["phone",        "MEDIUM",   /\b(?:\+?1[-.\s])?\(?\d{3}\)?[-.\s]\d{3}[-.\s]\d{4}\b/g],
-  ["iban",         "HIGH",     /\b[A-Z]{2}[0-9]{2}(?:[ -]?[A-Z0-9]){11,30}\b/g],
 ];
 
 export const SEVERITY_RANK: Record<string, number> = {
@@ -117,7 +121,7 @@ export function redactSample(ftype: string, value: unknown): string {
     const digits = v.replace(/\D/g, "");
     return digits.length >= 4 ? "***-***-" + digits.slice(-4) : "****";
   }
-  if (ftype === "iban") return v.length > 2 ? v.slice(0, 2) + "****" : "****";
+  if (ftype === "iban") return v.length > 2 ? v.slice(0, 2).toUpperCase() + "****" : "****";
   if (ftype === "ip_internal") {
     const parts = v.split(".");
     return parts.length === 4 ? [parts[0], parts[1], "*", "*"].join(".") : "****";
@@ -144,12 +148,32 @@ function luhnOk(value: string): boolean {
   return total % 10 === 0;
 }
 
+/* ISO 13616 mod-97 check over `value` with separators removed. Like the Luhn
+   check for cards: a match is only a finding if it checksums, so an order
+   number or licence key that happens to be IBAN-shaped is neither masked nor
+   recorded as pii_types: ["iban"]. */
+function ibanOk(value: string): boolean {
+  const v = String(value).replace(/[ .-]/g, "").toUpperCase();
+  if (v.length < 15 || v.length > 34 || !/^[A-Z]{2}[0-9]{2}/.test(v)) return false;
+  const rearranged = v.slice(4) + v.slice(0, 4);
+  let remainder = 0;
+  for (const ch of rearranged) {
+    const piece = /[A-Z]/.test(ch) ? String(ch.charCodeAt(0) - 55) : ch;
+    for (const d of piece) remainder = (remainder * 10 + Number(d)) % 97;
+  }
+  return remainder === 1;
+}
+
+/* Patterns whose shape alone is ambiguous carry a checksum gate. */
+const VALIDATORS: Record<string, (v: string) => boolean> = { credit_card: luhnOk, iban: ibanOk };
+
 /* Apply only the known-pattern redactions. */
 function applyPatterns(text: string): string {
   let out = text;
   for (const [name, , pattern] of PATTERNS) {
+    const ok = VALIDATORS[name];
     out = out.replace(new RegExp(pattern.source, pattern.flags), (m) =>
-      name === "credit_card" && !luhnOk(m) ? m : redactSample(name, m));
+      ok && !ok(m) ? m : redactSample(name, m));
   }
   return out;
 }
@@ -188,7 +212,8 @@ export function scan(text: unknown, entropy = true): Finding[] {
     if (!matches) continue;
     let n = 0;
     for (const m of matches) {
-      if (name === "credit_card" && !luhnOk(m)) continue;
+      const ok = VALIDATORS[name];
+      if (ok && !ok(m)) continue;
       const sample = redactSample(name, String(m).slice(0, 120));
       const key = name + ":" + sample;
       if (seen.has(key)) continue;

@@ -129,6 +129,8 @@ export interface ToolCallOptions {
   approver?: string;
   subject?: string | { id: string; name?: string } | null;
   source?: string | Partial<Source> | null;
+  /** Data-handling declarations sealed in data.* (region, purpose, cross_region, ...). */
+  data?: Record<string, unknown>;
   summaries?: boolean;
 }
 
@@ -169,6 +171,9 @@ export function recordModelCall(recorder: RecorderLike, opts: ModelCallOptions):
     subject: opts.subject,
     source: opts.source,
     summaries: opts.summaries ?? true,
+    // The declared purpose is data-handling context, so it also lands in
+    // data.purpose where exports and residency checks read it (Python parity).
+    data: opts.purpose ? { purpose: opts.purpose } : undefined,
   });
 }
 
@@ -191,12 +196,13 @@ export function recordToolCall(
       sessionId: opts.sessionId ?? "local",
       agent: opts.agent,
       scope: opts.scope ?? deriveScope(cls, toolName),
-      decision: opts.decision ?? "allowed",
+      decision: opts.decision,
       approver: opts.approver,
       outcome: deriveOutcome(opts.response, opts.error),
       subject: opts.subject,
-      source: opts.source,
+      source: opts.source ?? "recorder",
       summaries: opts.summaries ?? true,
+      data: opts.data,
     },
   );
   return recorder.append(record);

@@ -148,3 +148,26 @@ test("redaction: hyphen-separated IBANs are masked like space-separated ones", (
     assert.ok(!redactText("account " + v).includes("6016"), v);
   }
 });
+
+test("redaction: IBAN gate is mod-97 — valid IBANs mask whole, look-alikes are left alone", () => {
+  for (const v of ["GB82 WEST 1234 5698 7654 32", "gb82 west 1234 5698 7654 32",
+                   "GB82.WEST.1234.5698.7654.32", "DE89 3704 0044 0532 0130 00"]) {
+    assert.ok(scan(v).some((f) => f.type === "iban"), v);
+    assert.ok(!redactText("account " + v).includes("1234") && !redactText("account " + v).includes("0044"), v);
+  }
+  for (const v of ["PO12 3456 7890 1234", "SK10-ABCD-1234-5678-9012", "OK42 WE ARE GOOD TO GO NOW",
+                   "AB12-CDEF-3456-7890-1234-56"]) {
+    assert.ok(!scan(v, false).some((f) => f.type === "iban"), v);
+    // the AB12 order number carries a Luhn-valid Amex-shaped digit run; card
+    // masking it is the documented safe failure, so only the first three stay verbatim
+    if (!v.startsWith("AB12")) assert.equal(redactText(v, false), v, v);
+  }
+  assert.equal(redactText("send to DE89 3704 0044 0532 0130 00"), "send to DE****");
+});
+
+test("redaction: vendor-segmented sk- keys mask even with a low-entropy body", () => {
+  for (const v of ["sk-live-AAAAAAAAAAAAAAAAAAAAAAAA", "sk-proj-abcdefghijklmnop1234"]) {
+    assert.ok(scan(v, false).some((f) => f.type === "api_key"), v);
+    assert.ok(!redactText(v, false).includes("AAAAAAAA") && !redactText(v, false).includes("abcdefgh"), v);
+  }
+});

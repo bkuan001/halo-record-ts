@@ -529,3 +529,49 @@ test("verify: delegation resolution is reported, orphans do not fail the chain",
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("build: authorization is never defaulted; out-of-enum values are dropped loudly", () => {
+  assert.equal(build("tool_call", "security", { tool: "x" }).action.authorization, undefined);
+  assert.deepEqual(build("tool_call", "security", { tool: "x", decision: "denied" }).action.authorization,
+    { decision: "denied" });
+  const errs: string[] = [];
+  const orig = console.error;
+  console.error = (m: unknown) => { errs.push(String(m)); };
+  try {
+    const r = build("tool_call", "security", { tool: "x", decision: "approved", scope: "s" });
+    assert.deepEqual(r.action.authorization, { scope: "s" });
+    const r2 = build("tool_call", "security", { tool: "x", source: { adapter: "csv", capture: "bogus" as unknown as "captured" } });
+    assert.equal(r2.source, undefined);
+  } finally {
+    console.error = orig;
+  }
+  assert.ok(errs.some((e) => e.includes("approved")) && errs.some((e) => e.includes("bogus")));
+});
+
+test("Recorder.record stamps source=recorder by default", () => {
+  const dir = mkdtempSync(join(tmpdir(), "halo-src-"));
+  const rec = new Recorder(join(dir, "c.jsonl"));
+  const r = rec.record("tool_call", "security", { tool: "x" });
+  assert.equal(r.source?.adapter, "recorder");
+  assert.equal(r.source?.capture, "captured");
+});
+
+test("build: BigInt or object declarations are dropped with a diagnostic, never thrown", () => {
+  const orig = console.error;
+  const errs: string[] = [];
+  console.error = (m: unknown) => { errs.push(String(m)); };
+  try {
+    const r = build("tool_call", "security", {
+      tool: "x",
+      decision: 10n as unknown as string,
+      data: { cross_region: 5n },
+      source: { adapter: "csv", capture: { tier: "captured" } as unknown as "captured" },
+    });
+    assert.equal(r.action.authorization, undefined);
+    assert.equal(r.source, undefined);
+    assert.equal((r.data as Record<string, unknown> | undefined)?.cross_region, undefined);
+  } finally {
+    console.error = orig;
+  }
+  assert.equal(errs.length, 3);
+});
