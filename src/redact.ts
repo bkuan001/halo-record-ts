@@ -45,7 +45,7 @@ const PATTERNS: Array<[string, Severity, RegExp]> = [
   ["email",        "MEDIUM",   /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/g],
   ["ip_internal",  "MEDIUM",   /\b(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})\b/g],
   ["phone",        "MEDIUM",   /\b(?:\+?1[-.\s])?\(?\d{3}\)?[-.\s]\d{3}[-.\s]\d{4}\b/g],
-  ["iban",         "HIGH",     /\b[A-Z]{2}[0-9]{2}(?:[ ]?[A-Z0-9]){11,30}\b/g],
+  ["iban",         "HIGH",     /\b[A-Z]{2}[0-9]{2}(?:[ -]?[A-Z0-9]){11,30}\b/g],
 ];
 
 export const SEVERITY_RANK: Record<string, number> = {

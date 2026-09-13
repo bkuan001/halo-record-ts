@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: ["20", "22"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+      - name: Install
+        run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Build
+        run: npm run build
+      - name: Run tests
+        run: npm test
+      - name: Schema parity with the Python package
+        run: |
+          curl -sSf https://raw.githubusercontent.com/bkuan001/halo-record/main/src/halo_record/halo-record.schema.json -o /tmp/py-schema.json
+          cmp /tmp/py-schema.json halo-record.schema.json

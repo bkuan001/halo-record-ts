@@ -141,3 +141,10 @@ test("response filename lists stay readable, findings dedupe across input and re
   assert.ok(s3.includes("src/generated/AcmeBillingClientV2Generated/index.ts"));
   assert.ok(!s3.includes("AbC1dEf2GhI3jKl4MnO5pQr6StU7vWx8YzA9bCd0"));
 });
+
+test("redaction: hyphen-separated IBANs are masked like space-separated ones", () => {
+  for (const v of ["GB29-NWBK-6016-1331-9268-19", "GB29 NWBK 6016 1331 9268 19", "GB29NWBK60161331926819"]) {
+    assert.ok(scan(v).some((f) => f.type === "iban"), v);
+    assert.ok(!redactText("account " + v).includes("6016"), v);
+  }
+});
