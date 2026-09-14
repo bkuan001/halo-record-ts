@@ -575,3 +575,58 @@ test("build: BigInt or object declarations are dropped with a diagnostic, never 
   }
   assert.equal(errs.length, 3);
 });
+
+test("build: junk in schema-typed fields is coerced or dropped, never sealed invalid, never thrown", () => {
+  const orig = console.error;
+  console.error = () => {};
+  try {
+    const r = build("tool_call", "security", {
+      tool: 123 as unknown as string,
+      scope: ["gmail.read"] as unknown as string,
+      approver: 10n as unknown as string,
+      sessionId: null as unknown as string,
+      agent: "bot" as unknown as { id: string; name: string },
+      subject: { id: 5 as unknown as string },
+      source: 123 as unknown as string,
+      findings: [{ type: "x" } as unknown as Finding, "junk" as unknown as Finding],
+    });
+    assert.equal(r.action.tool, "123");
+    assert.equal(r.action.authorization?.scope, undefined);
+    assert.equal(r.action.authorization?.approver, "10");
+    assert.equal(r.session_id, "local");
+    assert.deepEqual(r.agent, { id: "bot", name: "bot" });
+    assert.equal((r.subject as { id: string }).id, "5");
+    assert.equal(r.source, undefined);
+    assert.equal(r.findings.length, 1);
+    assert.equal(r.findings[0].severity, "INFO");
+    assert.deepEqual(validateRecord(r), []);
+    const r2 = build("tool_call", "security", { tool: "x", source: { adapter: "csv", capture: null as unknown as "captured" } });
+    assert.equal(r2.source, undefined);
+  } finally {
+    console.error = orig;
+  }
+});
+
+test("build: compact IBAN glued to a suffix still masks; caller finding samples are redacted; non-scalar identity drops the block", () => {
+  assert.equal(redactText("DE89370400440532013000EUR"), "DE****EUR");
+  const orig = console.error;
+  console.error = () => {};
+  try {
+    const r = build("tool_call", "security", {
+      tool: "x",
+      findings: [{ type: "custom", severity: ["HIGH"] as unknown as "HIGH", sample: "key sk-live-AAAAAAAAAAAAAAAAAAAAAAAA", extra: 1 } as unknown as Finding],
+      subject: { id: { x: 1 } as unknown as string },
+      agent: { id: ["a"] as unknown as string, name: "n" },
+      source: { adapter: null as unknown as string, capture: "captured" },
+    });
+    assert.deepEqual(Object.keys(r.findings[0]).sort(), ["sample", "severity", "type"]);
+    assert.equal(r.findings[0].severity, "INFO");
+    assert.ok(!String(r.findings[0].sample).includes("AAAAAAAA"));
+    assert.equal(r.subject, undefined);
+    assert.equal((r.agent as { id: string }).id, "unknown");
+    assert.equal(r.source, undefined);
+    assert.deepEqual(validateRecord(r), []);
+  } finally {
+    console.error = orig;
+  }
+});

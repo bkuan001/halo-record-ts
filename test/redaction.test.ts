@@ -171,3 +171,21 @@ test("redaction: vendor-segmented sk- keys mask even with a low-entropy body", (
     assert.ok(!redactText(v, false).includes("AAAAAAAA") && !redactText(v, false).includes("abcdefgh"), v);
   }
 });
+
+test("redaction: IBANs mid-sentence mask whole — trailing words never disarm the gate", () => {
+  const cases: Array<[string, string]> = [
+    ["Wire 500 EUR to DE89370400440532013000 today please", "Wire 500 EUR to DE**** today please"],
+    ["Wire 500 EUR to DE89 3704 0044 0532 0130 00 today please", "Wire 500 EUR to DE**** today please"],
+    ["DE89370400440532013000 EUR", "DE**** EUR"],
+    ["from DE89 3704 0044 0532 0130 00 to GB82 WEST 1234 5698 7654 32", "from DE**** to GB****"],
+    ["DE89  3704  0044  0532  0130  00 double", "DE**** double"],
+    ["pay DE67 0792 4402 6859 9528 90 now", "pay DE**** now"],
+  ];
+  for (const [input, expected] of cases) {
+    assert.equal(redactText(input), expected, input);
+    const types = scan(input).map((f) => f.type);
+    assert.ok(types.includes("iban"), input);
+    assert.ok(!types.includes("credit_card"), "card must not co-classify an IBAN: " + input);
+  }
+  assert.ok(scan("sk-ant-api03-ABCDEFGHIJKLMNOPQRST_uvwx-yz12", false).some((f) => f.type === "api_key"));
+});

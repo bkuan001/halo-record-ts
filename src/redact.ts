@@ -26,7 +26,7 @@ export interface Finding {
 }
 
 const PATTERNS: Array<[string, Severity, RegExp]> = [
-  ["api_key",      "CRITICAL", /(?:sk-(?:[a-z0-9]{2,10}-)*[a-zA-Z0-9]{16,}|AKIA[0-9A-Z]{16}|xox[baprs]-[a-zA-Z0-9-]{10,})/g],
+  ["api_key",      "CRITICAL", /(?:sk-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|xox[baprs]-[a-zA-Z0-9-]{10,})/g],
   ["gcp_api_key",  "CRITICAL", /AIza[0-9A-Za-z_\-]{35,}/g],
   ["aws_secret_key", "CRITICAL", /aws_secret_access_key(?:\s*[=:]\s*|\s+)["']?[A-Za-z0-9/+=]{40}/gi],
   ["webhook_url",   "CRITICAL", /https:\/\/(?:hooks\.slack\.com\/services\/|discord(?:app)?\.com\/api\/webhooks\/|[a-z0-9.-]+\.webhook\.office\.com\/webhookb2\/|outlook\.office\.com\/webhook\/)[^\s"'<>]+/g],
@@ -43,7 +43,7 @@ const PATTERNS: Array<[string, Severity, RegExp]> = [
   // check would otherwise be card-masked first, leaving country/check digits
   // and the tail exposed. Shape-tolerant (case, space/dot/hyphen groups) and
   // gated on the mod-97 check, so ordinary identifiers are not classified.
-  ["iban",         "HIGH",     /\b[A-Za-z]{2}[0-9]{2}(?:[ .-]?[A-Za-z0-9]){11,30}\b/g],
+  ["iban",         "HIGH",     /\b[A-Za-z]{2}[0-9]{2}(?:[ .\-\t\u00a0]{0,2}[A-Za-z0-9]{4}){2,7}(?:[ .\-\t\u00a0]{0,2}[A-Za-z0-9]{1,4})?\b/g],
   ["credit_card",  "HIGH",     /\b(?:4[0-9]{3}|5[1-5][0-9]{2}|3[47][0-9]{2}|6(?:011|5[0-9]{2}))(?:[ -]?[0-9]){9,13}\b/g],
   ["ssn",          "HIGH",     /\b\d{3}[- ]\d{2}[- ]\d{4}\b/g],
   ["bearer_token", "HIGH",     /Bearer\s+[a-zA-Z0-9\-_.]{20,}/g],
@@ -152,8 +152,10 @@ function luhnOk(value: string): boolean {
    check for cards: a match is only a finding if it checksums, so an order
    number or licence key that happens to be IBAN-shaped is neither masked nor
    recorded as pii_types: ["iban"]. */
+const IBAN_SEP = /[ .\-\t\u00a0]/g;
+
 function ibanOk(value: string): boolean {
-  const v = String(value).replace(/[ .-]/g, "").toUpperCase();
+  const v = String(value).replace(IBAN_SEP, "").toUpperCase();
   if (v.length < 15 || v.length > 34 || !/^[A-Z]{2}[0-9]{2}/.test(v)) return false;
   const rearranged = v.slice(4) + v.slice(0, 4);
   let remainder = 0;
@@ -164,6 +166,31 @@ function ibanOk(value: string): boolean {
   return remainder === 1;
 }
 
+/* The longest block-aligned prefix of a match that passes mod-97, or null. A
+   regex match can run past the account number into whatever follows it
+   ("DE89 … 00 EUR"); the gate must not let that trailing text disarm the
+   mask, so it retries shorter candidates before giving up. */
+function ibanPrefix(matchText: string): string | null {
+  const t = String(matchText);
+  if (ibanOk(t)) return t;
+  // Try every shorter endpoint, longest first — separator-aligned or not, so a
+  // compact IBAN glued to a suffix ("…013000EUR") is still found.
+  for (let end = t.length - 1; end > 0; end--) {
+    const cand = t.slice(0, end).replace(/[ .\-\t\u00a0]+$/, "");
+    if (cand.replace(IBAN_SEP, "").length < 15) break;
+    if (ibanOk(cand)) return cand;
+  }
+  return null;
+}
+
+/* For checksum-gated patterns, the part of the match that is a real finding
+   (null if none). Cards check as matched; IBANs may shrink to a passing prefix. */
+function validatedSpan(name: string, matchText: string): string | null {
+  if (name === "credit_card") return luhnOk(matchText) ? matchText : null;
+  if (name === "iban") return ibanPrefix(matchText);
+  return matchText;
+}
+
 /* Patterns whose shape alone is ambiguous carry a checksum gate. */
 const VALIDATORS: Record<string, (v: string) => boolean> = { credit_card: luhnOk, iban: ibanOk };
 
@@ -171,9 +198,14 @@ const VALIDATORS: Record<string, (v: string) => boolean> = { credit_card: luhnOk
 function applyPatterns(text: string): string {
   let out = text;
   for (const [name, , pattern] of PATTERNS) {
-    const ok = VALIDATORS[name];
-    out = out.replace(new RegExp(pattern.source, pattern.flags), (m) =>
-      ok && !ok(m) ? m : redactSample(name, m));
+    if (name in VALIDATORS) {
+      out = out.replace(new RegExp(pattern.source, pattern.flags), (m) => {
+        const span = validatedSpan(name, m);
+        return span === null ? m : redactSample(name, span) + m.slice(span.length);
+      });
+    } else {
+      out = out.replace(new RegExp(pattern.source, pattern.flags), (m) => redactSample(name, m));
+    }
   }
   return out;
 }
@@ -207,13 +239,19 @@ export function scan(text: unknown, entropy = true): Finding[] {
   const findings: Finding[] = [];
   const seen = new Set<string>();
 
+  const ibanSpans: Array<[number, number]> = []; // a card match inside one is the same number
   for (const [name, severity, pattern] of PATTERNS) {
-    const matches = s.match(new RegExp(pattern.source, pattern.flags));
-    if (!matches) continue;
     let n = 0;
-    for (const m of matches) {
-      const ok = VALIDATORS[name];
-      if (ok && !ok(m)) continue;
+    for (const mm of s.matchAll(new RegExp(pattern.source, pattern.flags))) {
+      let m = mm[0];
+      const start = mm.index ?? 0;
+      if (name in VALIDATORS) {
+        const span = validatedSpan(name, m);
+        if (span === null) continue;
+        if (name === "iban") ibanSpans.push([start, start + span.length]);
+        else if (name === "credit_card" && ibanSpans.some(([a, b]) => a <= start && start < b)) continue;
+        m = span;
+      }
       const sample = redactSample(name, String(m).slice(0, 120));
       const key = name + ":" + sample;
       if (seen.has(key)) continue;
@@ -235,9 +273,9 @@ export function topSeverity(findings: Finding[]): Severity {
   if (!findings || findings.length === 0) return "INFO";
   let best = findings[0];
   for (const f of findings.slice(1)) {
-    if ((SEVERITY_RANK[f.severity] ?? 0) > (SEVERITY_RANK[best.severity] ?? 0)) best = f;
+    if ((SEVERITY_RANK[f?.severity] ?? 0) > (SEVERITY_RANK[best?.severity] ?? 0)) best = f;
   }
-  return best.severity;
+  return best && best.severity in SEVERITY_RANK ? best.severity : "INFO";
 }
 
 /* Argument keys whose values are file-system paths, globs, or URLs by

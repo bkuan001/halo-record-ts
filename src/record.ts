@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 
 import { GENESIS_PREV, canon, computeHash, inputHash, sha256Hex } from "./canon.ts";
-import { maskKnownSecrets, redactFields, redactText, scan, scanFields, topSeverity, type Finding } from "./redact.ts";
+import { SEVERITY_RANK, maskKnownSecrets, redactFields, redactText, scan, scanFields, topSeverity, type Finding, type Severity } from "./redact.ts";
 
 export const SCHEMA_VERSION = "0.1";
 
@@ -65,9 +65,22 @@ export function normalizeSource(source: string | Partial<Source> | null | undefi
   if (typeof source === "string") {
     return { ...(SOURCES[source] ?? { adapter: source, via: source, capture: "ingested" }) };
   }
-  const src = { ...source } as Source;
-  src.capture ??= "ingested";
-  src.via ??= src.adapter ?? "unknown";
+  if (typeof source !== "object" || Array.isArray(source)) {
+    console.error(`halo-record: source=${shown(source)} is not a tag name or object; source dropped`);
+    return null;
+  }
+  const raw: Record<string, unknown> = { ...(source as Record<string, unknown>) };
+  for (const k of ["adapter", "via"] as const) {
+    const v = raw[k];
+    if (v !== undefined && v !== null && typeof v !== "string") raw[k] = String(v);
+  }
+  if (!raw["adapter"]) {
+    console.error("halo-record: source has no adapter name; source dropped");
+    return null;
+  }
+  if (!("capture" in raw)) raw["capture"] = "ingested";
+  raw["via"] ??= raw["adapter"];
+  const src = raw as unknown as Source;
   if (typeof src.capture !== "string" || !CAPTURE_TIERS.has(src.capture)) {
     // The verifier rejects any other tier; drop the tier claim loudly rather
     // than guess one — the record seals without a source.
@@ -87,7 +100,60 @@ function now(): string {
 function normSubject(subject: string | { id: string; name?: string } | null | undefined) {
   if (subject == null) return null;
   if (typeof subject === "string") return { id: subject };
-  return subject;
+  if (typeof subject !== "object" || Array.isArray(subject)) {
+    console.error(`halo-record: subject=${shown(subject)} is not a string or object; dropped`);
+    return null;
+  }
+  const out = { ...(subject as Record<string, unknown>) };
+  for (const k of ["id", "name"]) {
+    const v = out[k];
+    if (v === undefined || v === null || typeof v === "string") continue;
+    if (typeof v === "number" || typeof v === "boolean" || typeof v === "bigint") out[k] = String(v);
+    else {
+      console.error(`halo-record: subject.${k}=${shown(v)} is not a scalar; subject dropped`);
+      return null;
+    }
+  }
+  return out as { id: string; name?: string };
+}
+
+/* Coerce a scalar to string for a schema-typed string field; drop anything
+   else with a note. undefined passes through. */
+function asStr(field: string, value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") return String(value);
+  console.error(`halo-record: ${field}=${shown(value)} is not a string; dropped`);
+  return undefined;
+}
+
+/* Caller-supplied findings are sealed as given (LIMITS §13), but never in a
+   shape the verifier rejects: entries must be objects with a type; a missing or
+   unknown severity becomes INFO. A non-array is ignored so the recorder scans. */
+function normCallerFindings(findings: unknown): Finding[] | null {
+  if (!Array.isArray(findings)) {
+    console.error(`halo-record: findings=${shown(findings)} is not an array; ignored, the recorder's own scan applies`);
+    return null;
+  }
+  const out: Finding[] = [];
+  for (const f of findings) {
+    if (!f || typeof f !== "object" || !(f as Record<string, unknown>)["type"]) {
+      console.error(`halo-record: finding ${shown(f)} lacks a type; dropped`);
+      continue;
+    }
+    // Only the schema's three fields survive, and a caller-supplied sample
+    // goes through the same masking as everything else the record stores.
+    const src = f as Record<string, unknown>;
+    const sev = src["severity"];
+    const g: Finding = {
+      type: String(src["type"]),
+      severity: (typeof sev === "string" && sev in SEVERITY_RANK ? sev : "INFO") as Severity,
+    };
+    const sample = src["sample"];
+    if (["string", "number", "boolean", "bigint"].includes(typeof sample)) g.sample = redactText(String(sample)).slice(0, 120);
+    out.push(g);
+  }
+  return out;
 }
 
 const PRINCIPAL_KEYS = ["human_id", "creator_id", "service_account", "role_scope"] as const;
@@ -343,7 +409,32 @@ export function build(actionType: string, category: string, opts: BuildOptions =
     );
     decision = undefined;
   }
-  let findings = opts.findings ?? null;
+  let findings = opts.findings == null ? null : normCallerFindings(opts.findings);
+  // Schema-typed string fields: scalars are coerced, anything else dropped
+  // with a note rather than sealed into a record that can never verify.
+  const toolS = asStr("tool", tool);
+  const scopeS = asStr("authorization.scope", scope);
+  const approverS = asStr("authorization.approver", approver);
+  const sessionS = asStr("session_id", sessionId) ?? "local";
+  let agentN = agent as unknown;
+  if (typeof agentN === "string") agentN = { id: agentN, name: agentN };
+  else if (agentN !== undefined && agentN !== null && (typeof agentN !== "object" || Array.isArray(agentN))) {
+    console.error(`halo-record: agent=${shown(agentN)} is not an object; recorded as unknown`);
+    agentN = undefined;
+  } else if (agentN && typeof agentN === "object") {
+    const a = { ...(agentN as Record<string, unknown>) };
+    for (const k of ["id", "name", "version", "model", "model_version"]) {
+      const v = a[k];
+      if (v === undefined || v === null || typeof v === "string") continue;
+      if (typeof v === "number" || typeof v === "boolean" || typeof v === "bigint") a[k] = String(v);
+      else {
+        console.error(`halo-record: agent.${k}=${shown(v)} is not a scalar; recorded as unknown`);
+        agentN = undefined;
+        break;
+      }
+    }
+    if (agentN !== undefined) agentN = a;
+  }
 
   if (!ACTION_TYPES.has(actionType)) {
     throw new RangeError("action.type must be one of " + [...ACTION_TYPES].sort().join(", "));
@@ -353,15 +444,15 @@ export function build(actionType: string, category: string, opts: BuildOptions =
   }
 
   const action: Record<string, unknown> = { type: actionType, category };
-  if (tool !== undefined) action["tool"] = tool;
+  if (toolS !== undefined) action["tool"] = toolS;
   // The authorization block appears only when the integration supplies one.
   // Nothing is defaulted: a record with no decision says "no gate reported",
   // never "allowed".
-  if (scope !== undefined || (decision !== undefined && decision !== null) || approver !== undefined) {
+  if (scopeS !== undefined || (decision !== undefined && decision !== null) || approverS !== undefined) {
     const auth: Record<string, unknown> = {};
     if (decision !== undefined && decision !== null) auth["decision"] = decision;
-    if (scope !== undefined) auth["scope"] = scope;
-    if (approver !== undefined) auth["approver"] = approver;
+    if (scopeS !== undefined) auth["scope"] = scopeS;
+    if (approverS !== undefined) auth["approver"] = approverS;
     else if (decision === "human_approved") {
       console.error(
         "halo-record: decision is human_approved but no approver was supplied; " +
@@ -425,9 +516,9 @@ export function build(actionType: string, category: string, opts: BuildOptions =
   const record: HaloRecord = {
     schema_version: SCHEMA_VERSION,
     record_id: randomUUID(),
-    session_id: sessionId,
+    session_id: sessionS,
     ts: ts ?? now(),
-    agent: agent ?? { id: "unknown", name: "unknown" },
+    agent: (agentN as Record<string, unknown> | undefined) ?? { id: "unknown", name: "unknown" },
     action,
     severity: topSeverity(findings),
     findings,

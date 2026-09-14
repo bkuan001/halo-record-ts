@@ -54,6 +54,7 @@ const rec = new Recorder("acme.jsonl");
 rec.append(build("tool_call", "security", {
   tool: "crm.lookup",
   toolInput: { account: "acct-9" },
+  source: "recorder",                    // provenance tag; rec.record(...) sets this for you
   authority: { snapshot_id: "auth_1", rules_hash: "sha256:..." },
   summaries: false,                       // hash-only: no summaries, no excerpts
 }));
